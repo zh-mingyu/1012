@@ -18,8 +18,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, Field, PrivateAttr
 
-from memwire.core.models.memory_entry import InteractionThread
-from memwire.core.thread_store import ThreadCandidate
+from memrewire.core.models.memory_entry import InteractionThread
+from memrewire.core.thread_store import ThreadCandidate
 
 
 class WorkspaceEvidence(BaseModel):

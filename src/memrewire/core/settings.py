@@ -1,5 +1,5 @@
 """
-MemWire runtime settings.
+MemRewire runtime settings.
 
 Resolution order for each attribute:
   1. User's top-level ``config.py`` (if importable on sys.path)

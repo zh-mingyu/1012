@@ -126,7 +126,7 @@ def main() -> None:
         shard_dir = args.run_root / f"locomo_{args.array_job_id}_{shard_index}"
         result_path = shard_dir / "results.json"
         token_path = shard_dir / "token_usage_summary.json"
-        marker = shard_dir / "MEMWIRE_COMPLETED"
+        marker = shard_dir / "MEMREWIRE_COMPLETED"
         missing = [str(path) for path in (result_path, token_path, marker) if not path.exists()]
         if missing:
             raise FileNotFoundError(

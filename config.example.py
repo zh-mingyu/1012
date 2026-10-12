@@ -1,4 +1,4 @@
-"""Local configuration example for the MemWire release bundle.
+"""Local configuration example for the MemRewire release bundle.
 
 Copy this file to ``config.py`` and replace only local model paths and the
 OpenAI-compatible endpoint. Do not put provider credentials in this file when
@@ -10,7 +10,7 @@ using a local vLLM server.
 # ============================================================================
 
 # A local vLLM server can use any non-empty placeholder key.
-OPENAI_API_KEY = "memwire-local"
+OPENAI_API_KEY = "memrewire-local"
 
 # Custom OpenAI Base URL (optional)
 # Set to None to use default OpenAI endpoint
@@ -66,7 +66,7 @@ OVERLAP_SIZE = 5
 
 
 # ============================================================================
-# MemWire routing and local activation
+# MemRewire routing and local activation
 # ============================================================================
 
 # ============================================================================

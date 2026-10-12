@@ -1,9 +1,9 @@
 """Checks for the source-turn selection contract used by the paper method."""
 
-from memwire.core.workspace import TransientAssemblyBuilder
-from memwire.core.answer_generator import AnswerGenerator
-from memwire.core.workspace import MemoryWorkspace, WorkspaceEvidence
-from memwire.core.settings import settings as config
+from memrewire.core.workspace import TransientAssemblyBuilder
+from memrewire.core.answer_generator import AnswerGenerator
+from memrewire.core.workspace import MemoryWorkspace, WorkspaceEvidence
+from memrewire.core.settings import settings as config
 
 
 def _candidate(node_id, score, source_ordinal):

@@ -11,15 +11,15 @@ _ROOT = _RELEASE_ROOT / "src"
 _SAVED_MODULES = {
     name: sys.modules.get(name)
     for name in (
-        "memwire",
-        "memwire.core",
-        "memwire.core.settings",
-        "memwire.core.utils",
-        "memwire.core.utils.llm_client",
-        "memwire.core.models",
-        "memwire.core.models.memory_entry",
-        "memwire.core.workspace",
-        "memwire.core.answer_generator",
+        "memrewire",
+        "memrewire.core",
+        "memrewire.core.settings",
+        "memrewire.core.utils",
+        "memrewire.core.utils.llm_client",
+        "memrewire.core.models",
+        "memrewire.core.models.memory_entry",
+        "memrewire.core.workspace",
+        "memrewire.core.answer_generator",
     )
 }
 
@@ -33,39 +33,39 @@ def _load_module(name, path):
 
 
 for package, path in (
-    ("memwire", _ROOT / "memwire"),
-    ("memwire.core", _ROOT / "memwire" / "core"),
-    ("memwire.core.utils", _ROOT / "memwire" / "core" / "utils"),
+    ("memrewire", _ROOT / "memrewire"),
+    ("memrewire.core", _ROOT / "memrewire" / "core"),
+    ("memrewire.core.utils", _ROOT / "memrewire" / "core" / "utils"),
 ):
     module = ModuleType(package)
     module.__path__ = [str(path)]
     sys.modules.setdefault(package, module)
 
 _load_module(
-    "memwire.core.settings",
-    _ROOT / "memwire" / "core" / "settings.py",
+    "memrewire.core.settings",
+    _ROOT / "memrewire" / "core" / "settings.py",
 )
 LLMClient = _load_module(
-    "memwire.core.utils.llm_client",
-    _ROOT / "memwire" / "core" / "utils" / "llm_client.py",
+    "memrewire.core.utils.llm_client",
+    _ROOT / "memrewire" / "core" / "utils" / "llm_client.py",
 ).LLMClient
 
-models_package = ModuleType("memwire.core.models")
-models_package.__path__ = [str(_ROOT / "memwire" / "core" / "models")]
-sys.modules.setdefault("memwire.core.models", models_package)
-memory_entry_module = ModuleType("memwire.core.models.memory_entry")
+models_package = ModuleType("memrewire.core.models")
+models_package.__path__ = [str(_ROOT / "memrewire" / "core" / "models")]
+sys.modules.setdefault("memrewire.core.models", models_package)
+memory_entry_module = ModuleType("memrewire.core.models.memory_entry")
 memory_entry_module.MemoryEntry = type("MemoryEntry", (), {})
-sys.modules.setdefault("memwire.core.models.memory_entry", memory_entry_module)
-workspace_module = ModuleType("memwire.core.workspace")
+sys.modules.setdefault("memrewire.core.models.memory_entry", memory_entry_module)
+workspace_module = ModuleType("memrewire.core.workspace")
 workspace_module.MemoryWorkspace = type("MemoryWorkspace", (), {})
-sys.modules.setdefault("memwire.core.workspace", workspace_module)
+sys.modules.setdefault("memrewire.core.workspace", workspace_module)
 AnswerGenerator = _load_module(
-    "memwire.core.answer_generator",
-    _ROOT / "memwire" / "core" / "answer_generator.py",
+    "memrewire.core.answer_generator",
+    _ROOT / "memrewire" / "core" / "answer_generator.py",
 ).AnswerGenerator
 merge_token_summaries = _load_module(
-    "merge_memwire_shards",
-    _RELEASE_ROOT / "merge_memwire_shards.py",
+    "merge_memrewire_shards",
+    _RELEASE_ROOT / "merge_memrewire_shards.py",
 ).merge_token_summaries
 
 # This module uses light-weight import stubs for isolated client tests. Do not
@@ -79,15 +79,15 @@ for _name, _module in _SAVED_MODULES.items():
 
 # Keep the dependency-light test module usable when collected on its own. The
 # isolated imports above may have started with no real settings module loaded.
-if "memwire.core.settings" not in sys.modules:
+if "memrewire.core.settings" not in sys.modules:
     import importlib
-    importlib.import_module("memwire.core.settings")
+    importlib.import_module("memrewire.core.settings")
 
 # The isolated answer-generator import may have captured a temporary settings
 # module object. Rebind its function globals to the process-wide module used by
 # the rest of the test suite.
 AnswerGenerator.generate_answer.__globals__["config"] = sys.modules[
-    "memwire.core.settings"
+    "memrewire.core.settings"
 ].settings
 
 
@@ -225,7 +225,7 @@ def test_answer_generation_does_not_retry_invalid_json():
 
 
 def test_full_prompt_budget_prunes_cells_before_request(monkeypatch):
-    settings = sys.modules["memwire.core.settings"].settings
+    settings = sys.modules["memrewire.core.settings"].settings
     monkeypatch.setattr(
         sys.modules[AnswerGenerator.__module__],
         "MemoryWorkspace",

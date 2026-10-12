@@ -1,4 +1,4 @@
-"""LoCoMo10 evaluator for the isolated MemWire system."""
+"""LoCoMo10 evaluator for the isolated MemRewire system."""
 from pathlib import Path
 import time
 import json
@@ -16,8 +16,8 @@ from bert_score import score as bert_score
 from sentence_transformers import SentenceTransformer
 from sentence_transformers.util import pytorch_cos_sim
 
-from memwire_app import MemWireSystem
-from memwire.core.models.memory_entry import Dialogue
+from memrewire_app import MemRewireSystem
+from memrewire.core.models.memory_entry import Dialogue
 
 # Download required NLTK data
 try:
@@ -331,7 +331,7 @@ def calculate_sentence_similarity(prediction: str, reference: str) -> float:
 
 def create_judge_llm_client():
     """Create a dedicated LLM client for judge evaluation"""
-    from memwire.core.utils.llm_client import LLMClient
+    from memrewire.core.utils.llm_client import LLMClient
     import config
     
     # Use judge-specific settings, fall back to main settings if not specified
@@ -610,11 +610,11 @@ def aggregate_metrics(all_metrics: List[Dict[str, float]], all_categories: List[
 
 
 class LoCoMoTester:
-    """Evaluate MemWire on the LoCoMo10 dataset."""
+    """Evaluate MemRewire on the LoCoMo10 dataset."""
 
     def __init__(
         self,
-        system: MemWireSystem,
+        system: MemRewireSystem,
         dataset_path: str,
         use_llm_judge: bool = False,
         test_workers: int = None,
@@ -1234,7 +1234,7 @@ Return ONLY the JSON, no other text.
     def run_test(self, num_samples: int = None, save_results: bool = True, result_file: str = 'locomo10_test_results.json', enable_parallel_questions: bool = False, shard_index: int = 0, num_shards: int = 1):
         """Run full test on dataset"""
         print("\n" + "="*80)
-        print(" MemWire LoCoMo10 Dataset Test".center(80))
+        print(" MemRewire LoCoMo10 Dataset Test".center(80))
         print("="*80 + "\n")
 
         # Load dataset
@@ -1455,7 +1455,7 @@ Return ONLY the JSON, no other text.
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description='Evaluate MemWire on LoCoMo10')
+    parser = argparse.ArgumentParser(description='Evaluate MemRewire on LoCoMo10')
     parser.add_argument('--dataset', type=str, default='test_ref/locomo10.json',
                        help='Path to LoComo10 dataset')
     parser.add_argument('--num-samples', type=int, default=None,
@@ -1482,10 +1482,10 @@ def main():
     args = parser.parse_args()
 
     # Create system
-    print("Initializing MemWire system...")
+    print("Initializing MemRewire system...")
     if args.build_only and args.reuse_bank:
         parser.error('--build-only and --reuse-bank are mutually exclusive')
-    system = MemWireSystem(clear_db=not args.reuse_bank)
+    system = MemRewireSystem(clear_db=not args.reuse_bank)
 
     # Create tester
     tester = LoCoMoTester(

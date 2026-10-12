@@ -1,16 +1,16 @@
-"""MemWire memory system entry point."""
+"""MemRewire memory system entry point."""
 from typing import List, Optional
-from memwire.core.models.memory_entry import Dialogue, MemoryEntry
-from memwire.core.utils.llm_client import LLMClient
-from memwire.core.utils.embedding import EmbeddingModel
-from memwire.core.thread_store import ThreadStore
-from memwire.core.memory_builder import MemoryBuilder
-from memwire.core.hybrid_retriever import MemWireRetriever
-from memwire.core.answer_generator import AnswerGenerator
-from memwire.core.settings import settings as config
+from memrewire.core.models.memory_entry import Dialogue, MemoryEntry
+from memrewire.core.utils.llm_client import LLMClient
+from memrewire.core.utils.embedding import EmbeddingModel
+from memrewire.core.thread_store import ThreadStore
+from memrewire.core.memory_builder import MemoryBuilder
+from memrewire.core.hybrid_retriever import MemRewireRetriever
+from memrewire.core.answer_generator import AnswerGenerator
+from memrewire.core.settings import settings as config
 
 
-class MemWireSystem:
+class MemRewireSystem:
     """
     Operator-aware memory wiring with transient query-local assembly.
 
@@ -54,7 +54,7 @@ class MemWireSystem:
         - graph_mode: Explicit write-time graph construction mode for matched experiments
         """
         print("=" * 60)
-        print("Initializing MemWire System")
+        print("Initializing MemRewire System")
         print("=" * 60)
 
         # Initialize core components
@@ -85,7 +85,7 @@ class MemWireSystem:
             max_parallel_workers=max_parallel_workers
         )
 
-        self.assembly_retriever = MemWireRetriever(
+        self.assembly_retriever = MemRewireRetriever(
             llm_client=self.llm_client,
             vector_store=self.vector_store,
             enable_planning=enable_planning,
@@ -203,11 +203,11 @@ def create_system(
     enable_parallel_retrieval: Optional[bool] = None,
     max_retrieval_workers: Optional[int] = None,
     graph_mode: Optional[str] = None,
-) -> MemWireSystem:
+) -> MemRewireSystem:
     """
     Create a transient assembly system instance.
     """
-    return MemWireSystem(
+    return MemRewireSystem(
         clear_db=clear_db,
         enable_planning=enable_planning,
         enable_parallel_processing=enable_parallel_processing,
@@ -219,7 +219,7 @@ def create_system(
 
 
 if __name__ == "__main__":
-    print("Running MemWire quick test...")
+    print("Running MemRewire quick test...")
 
     system = create_system(clear_db=True)
     print(f"📌 Using embedding model: {system.memory_builder.vector_store.embedding_model.model_name}")
@@ -254,7 +254,7 @@ if __name__ == "__main__":
 
 # Existing evaluators import these names. They are API aliases, not method
 # identifiers used in the paper.
-TransientRoleBindingSystem = MemWireSystem
-TransientAssemblySystem = MemWireSystem
-ThreadWorkspaceSystem = MemWireSystem
-SimpleMemSystem = MemWireSystem
+TransientRoleBindingSystem = MemRewireSystem
+TransientAssemblySystem = MemRewireSystem
+ThreadWorkspaceSystem = MemRewireSystem
+SimpleMemSystem = MemRewireSystem

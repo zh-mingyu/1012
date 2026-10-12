@@ -7,11 +7,11 @@ import math
 import re
 from typing import TYPE_CHECKING, List, Union
 
-from memwire.core.models.memory_entry import MemoryEntry
-from memwire.core.settings import settings as config
+from memrewire.core.models.memory_entry import MemoryEntry
+from memrewire.core.settings import settings as config
 if TYPE_CHECKING:
-    from memwire.core.utils.llm_client import LLMClient
-from memwire.core.workspace import MemoryWorkspace
+    from memrewire.core.utils.llm_client import LLMClient
+from memrewire.core.workspace import MemoryWorkspace
 
 
 _MAX_ANSWER_ATTEMPTS = 1

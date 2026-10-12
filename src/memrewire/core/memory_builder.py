@@ -12,12 +12,12 @@ from __future__ import annotations
 import hashlib
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Sequence
 
-from memwire.core.models.memory_entry import Dialogue, InteractionThread, ThreadNode
-from memwire.core.settings import settings as config
-from memwire.core.thread_store import ThreadStore
+from memrewire.core.models.memory_entry import Dialogue, InteractionThread, ThreadNode
+from memrewire.core.settings import settings as config
+from memrewire.core.thread_store import ThreadStore
 
 if TYPE_CHECKING:
-    from memwire.core.utils.llm_client import LLMClient
+    from memrewire.core.utils.llm_client import LLMClient
 
 
 class MemoryBuilder:
@@ -373,7 +373,7 @@ is the preferred name):
             data = self.llm_client.extract_json(response)
             return data if isinstance(data, dict) else {}
         except Exception as error:
-            print(f"[MemWire] span compilation failed; preserving raw turns: {error}")
+            print(f"[MemRewire] span compilation failed; preserving raw turns: {error}")
             return {}
 
     @staticmethod

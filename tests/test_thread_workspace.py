@@ -6,19 +6,19 @@ import tempfile
 
 import numpy as np
 
-from memwire.core.memory_builder import MemoryBuilder
-from memwire.core.models.memory_entry import Dialogue, InteractionThread, ThreadNode
-from memwire.core.thread_store import ThreadStore
-from memwire.core.hybrid_retriever import ThreadWorkspaceRetriever
-from memwire.core.workspace import (
+from memrewire.core.memory_builder import MemoryBuilder
+from memrewire.core.models.memory_entry import Dialogue, InteractionThread, ThreadNode
+from memrewire.core.thread_store import ThreadStore
+from memrewire.core.hybrid_retriever import ThreadWorkspaceRetriever
+from memrewire.core.workspace import (
     MemoryWorkspace,
     TransientAssemblyBuilder,
     WorkspaceEvidence,
     WorkspaceRelation,
     build_thread_workspace,
 )
-from memwire.core.answer_generator import AnswerGenerator
-from memwire.core.settings import settings as config
+from memrewire.core.answer_generator import AnswerGenerator
+from memrewire.core.settings import settings as config
 
 
 class FakeEmbedding:
@@ -647,7 +647,7 @@ def test_temporal_hint_preserves_relative_phrase_and_resolves_year():
 
 
 def test_temporal_canonicalization_uses_query_anchored_evidence():
-    from memwire.core.workspace import MemoryWorkspace, WorkspaceEvidence
+    from memrewire.core.workspace import MemoryWorkspace, WorkspaceEvidence
 
     workspace = MemoryWorkspace(
         workspace_id="ws-test",

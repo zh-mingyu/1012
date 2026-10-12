@@ -13,9 +13,9 @@ import sys
 import time
 from typing import Any, Dict, Iterable, List
 
-from memwire.core.models.memory_entry import Dialogue
-from memwire.core.settings import settings as config
-from memwire_app import MemWireSystem
+from memrewire.core.models.memory_entry import Dialogue
+from memrewire.core.settings import settings as config
+from memrewire_app import MemRewireSystem
 from locomo_evidence import normalize_evidence_ids
 
 
@@ -28,7 +28,7 @@ CATEGORY_NAMES = {
 }
 GRAPH_MODES = {
     "initial": "initial",
-    "memwire": "operator-aware",
+    "memrewire": "operator-aware",
     "random": "random-rewiring",
 }
 
@@ -293,14 +293,14 @@ def main() -> None:
         )
         mark_stage("model_init", model=config.EMBEDDING_MODEL)
         model_start = time.perf_counter()
-        system = MemWireSystem(
+        system = MemRewireSystem(
             clear_db=True,
             enable_parallel_processing=False,
             enable_parallel_retrieval=False,
             graph_mode=graph_mode,
         )
         # Keep the experiment condition explicit even when this runner is
-        # used with an older installed MemWireSystem signature. The graph
+        # used with an older installed MemRewireSystem signature. The graph
         # builder must see the same mode as the run manifest.
         config.THREAD_GRAPH_MODE = graph_mode
         if hasattr(system.vector_store, "graph_mode"):

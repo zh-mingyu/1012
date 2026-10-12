@@ -6,15 +6,15 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from memwire.core.models.memory_entry import MemoryEntry
-from memwire.core.settings import settings as config
-from memwire.core.thread_store import ThreadStore
+from memrewire.core.models.memory_entry import MemoryEntry
+from memrewire.core.settings import settings as config
+from memrewire.core.thread_store import ThreadStore
 if TYPE_CHECKING:
-    from memwire.core.utils.llm_client import LLMClient
-from memwire.core.workspace import MemoryWorkspace, build_transient_assembly
+    from memrewire.core.utils.llm_client import LLMClient
+from memrewire.core.workspace import MemoryWorkspace, build_transient_assembly
 
 
-class MemWireRetriever:
+class MemRewireRetriever:
     """Route once to source cells, then run the shared local state update.
 
     The class name remains for API compatibility. The active path has no
@@ -192,7 +192,7 @@ class MemWireRetriever:
         workspace.route_width = len(routes)
         workspace.receptive_field_scope = len(expanded)
         print(
-            f"[MemWire] routed={len(routes)} expanded={len(expanded)} "
+            f"[MemRewire] routed={len(routes)} expanded={len(expanded)} "
             f"nodes={workspace.node_candidate_count} visible={len(workspace.evidence)} "
             f"activation={workspace.activation_total:.3f}"
         )
@@ -247,7 +247,7 @@ Return ONLY JSON:
                 raise ValueError("thread address planner must return an object")
             return plan
         except Exception as error:
-            print(f"[MemWire] address planning failed; using question: {error}")
+            print(f"[MemRewire] address planning failed; using question: {error}")
             return {
                 "address": query,
                 "question_type": "general",
@@ -258,8 +258,8 @@ Return ONLY JSON:
 
 # Compatibility names used by the copied evaluator and older launchers.  The
 # canonical name makes it explicit which method is being evaluated.
-TransientRoleBindingRetriever = MemWireRetriever
-TransientAssemblyRetriever = MemWireRetriever
-AssemblyInducer = MemWireRetriever
-ThreadWorkspaceRetriever = MemWireRetriever
-HybridRetriever = MemWireRetriever
+TransientRoleBindingRetriever = MemRewireRetriever
+TransientAssemblyRetriever = MemRewireRetriever
+AssemblyInducer = MemRewireRetriever
+ThreadWorkspaceRetriever = MemRewireRetriever
+HybridRetriever = MemRewireRetriever

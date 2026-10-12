@@ -1,4 +1,4 @@
-"""Minimal invariants for MemWire's write-time topology compiler.
+"""Minimal invariants for MemRewire's write-time topology compiler.
 
 These tests deliberately exercise only the dependency-light graph layer.  The
 compiler must change the fixed wiring objective without changing the storage
@@ -7,8 +7,8 @@ budget or introducing query-time state into the persistent graph.
 
 import inspect
 
-from memwire.core.models.memory_entry import InteractionThread, ThreadNode
-from memwire.core.thread_store import ThreadStore
+from memrewire.core.models.memory_entry import InteractionThread, ThreadNode
+from memrewire.core.thread_store import ThreadStore
 
 
 def _threads():

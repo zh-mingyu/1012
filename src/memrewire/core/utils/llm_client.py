@@ -10,11 +10,11 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import List, Dict, Any, Optional, Iterator
 from openai import OpenAI
-from memwire.core.settings import settings as config
+from memrewire.core.settings import settings as config
 
 
 _USAGE_CONTEXT: ContextVar[Dict[str, Any]] = ContextVar(
-    "memwire_usage_context", default={}
+    "memrewire_usage_context", default={}
 )
 
 

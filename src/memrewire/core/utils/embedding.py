@@ -5,7 +5,7 @@ Supports Qwen3 Embedding models through SentenceTransformers interface
 from typing import List, Optional, Dict, Any
 import logging
 import numpy as np
-from memwire.core.settings import settings as config
+from memrewire.core.settings import settings as config
 import os
 import time
 
@@ -18,7 +18,7 @@ class EmbeddingModel:
         self.model_name = model_name or config.EMBEDDING_MODEL
         self.use_optimization = use_optimization
         self._encode_calls = 0
-        self._debug_logging = os.getenv("MEMWIRE_DEBUG_EMBEDDING", "0") == "1"
+        self._debug_logging = os.getenv("MEMREWIRE_DEBUG_EMBEDDING", "0") == "1"
         self._logger = logging.getLogger("paired_graph.embedding")
         
         print(f"Loading embedding model: {self.model_name}")

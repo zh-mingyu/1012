@@ -23,14 +23,14 @@ except ImportError:  # The lightweight local test runtime has no LanceDB.
     pa = None
     _HAS_LANCEDB = False
 
-from memwire.core.models.memory_entry import (
+from memrewire.core.models.memory_entry import (
     InteractionThread,
     MemoryEntry,
     ThreadLink,
     ThreadNode,
 )
-from memwire.core.settings import settings as config
-from memwire.core.utils.embedding import EmbeddingModel
+from memrewire.core.settings import settings as config
+from memrewire.core.utils.embedding import EmbeddingModel
 
 
 @dataclass
@@ -1003,7 +1003,7 @@ class ThreadStore:
         def deterministic_probe(thread_id: str, column: int) -> float:
             import hashlib
             digest = hashlib.sha256(
-                f"memwire-probe-v1|{thread_id}|{column}".encode("utf-8")
+                f"memrewire-probe-v1|{thread_id}|{column}".encode("utf-8")
             ).digest()
             return 1.0 if digest[0] & 1 else -1.0
 
