@@ -24,31 +24,31 @@ except ImportError:  # The lightweight local test runtime has no LanceDB.
     _HAS_LANCEDB = False
 
 from memrewire.core.models.memory_entry import (
-    InteractionThread,
+    MemoryCell,
     MemoryEntry,
-    ThreadLink,
-    ThreadNode,
+    CellLink,
+    SourceTurn,
 )
 from memrewire.core.settings import settings as config
 from memrewire.core.utils.embedding import EmbeddingModel
 
 
 @dataclass
-class ThreadRoute:
-    thread: InteractionThread
+class CellRoute:
+    cell: MemoryCell
     score: float
     rank: int
 
 
 @dataclass
-class ThreadCandidate:
-    thread: InteractionThread
+class CellCandidate:
+    cell: MemoryCell
     route_score: float
     hop: int
     path: List[str]
 
 
-class ThreadStore:
+class CellGraphStore:
     """Store routing addresses globally and expose fixed local payload links."""
 
     def __init__(
@@ -58,11 +58,11 @@ class ThreadStore:
         table_name: Optional[str] = None,
         graph_mode: Optional[str] = None,
     ) -> None:
-        self.db_path = db_path or getattr(config, "THREAD_LANCEDB_PATH", "./thread_lancedb_data")
-        self.table_name = table_name or getattr(config, "THREAD_TABLE_NAME", "interaction_threads")
+        self.db_path = db_path or getattr(config, "CELL_LANCEDB_PATH", "./cell_lancedb_data")
+        self.table_name = table_name or getattr(config, "CELL_TABLE_NAME", "memory_cells")
         configured_graph_mode = graph_mode
         if configured_graph_mode is None:
-            configured_graph_mode = getattr(config, "THREAD_GRAPH_MODE", "operator-aware")
+            configured_graph_mode = getattr(config, "CELL_GRAPH_MODE", "operator-aware")
         self.graph_mode = str(configured_graph_mode).strip().lower()
         self.head_table_name = f"{self.table_name}_heads"
         self.payload_table_name = f"{self.table_name}_payloads"
@@ -70,8 +70,8 @@ class ThreadStore:
         self._rows: List[Dict[str, Any]] = []
         self._payload_rows: List[Dict[str, Any]] = []
         self._payload_cache: Dict[str, Dict[str, Any]] = {}
-        self._thread_cache: Dict[str, InteractionThread] = {}
-        self._head_cache: Dict[str, InteractionThread] = {}
+        self._cell_cache: Dict[str, MemoryCell] = {}
+        self._head_cache: Dict[str, MemoryCell] = {}
         # A local receptive-field expansion touches many small LanceDB rows.
         # Build these lightweight metadata maps lazily once per sample so the
         # query path does not issue one point lookup per traversed edge.
@@ -110,7 +110,7 @@ class ThreadStore:
     def _init_tables(self) -> None:
         head_schema = pa.schema(
             [
-                pa.field("thread_id", pa.string()),
+                pa.field("cell_id", pa.string()),
                 pa.field("head", pa.string()),
                 pa.field("session_id", pa.string()),
                 pa.field("ordinal", pa.int64()),
@@ -122,7 +122,7 @@ class ThreadStore:
         )
         payload_schema = pa.schema(
             [
-                pa.field("thread_id", pa.string()),
+                pa.field("cell_id", pa.string()),
                 pa.field("nodes_json", pa.string()),
             ]
         )
@@ -146,7 +146,7 @@ class ThreadStore:
             self._rows = payload if isinstance(payload, list) else []
             self._payload_rows = []
             self._payload_cache = {}
-            self._thread_cache = {}
+            self._cell_cache = {}
             self._head_cache = {}
             self._payload_index = None
             self._head_index = None
@@ -171,7 +171,7 @@ class ThreadStore:
                     self.db.drop_table(name)
             self._init_tables()
             self._payload_cache = {}
-            self._thread_cache = {}
+            self._cell_cache = {}
             self._head_cache = {}
             self._payload_index = None
             self._head_index = None
@@ -180,7 +180,7 @@ class ThreadStore:
         else:
             self._rows = []
             self._payload_cache = {}
-            self._thread_cache = {}
+            self._cell_cache = {}
             self._head_cache = {}
             self._payload_index = None
             self._head_index = None
@@ -188,28 +188,28 @@ class ThreadStore:
             self._head_index_load_failed = False
             self._save_fallback()
 
-    def add_threads(self, threads: Sequence[InteractionThread]) -> None:
-        if not threads:
+    def add_cells(self, cells: Sequence[MemoryCell]) -> None:
+        if not cells:
             return
         graph_started = time.perf_counter()
         logger = logging.getLogger("paired_graph.graph")
-        existing = {thread.thread_id: thread for thread in self.get_all_threads()}
-        incoming = [thread.copy(deep=True) for thread in threads]
+        existing = {cell.cell_id: cell for cell in self.get_all_cells()}
+        incoming = [cell.copy(deep=True) for cell in cells]
         logger.info(
             "GRAPH_BUILD_START mode=%s incoming_cells=%s existing_cells=%s",
-            getattr(config, "THREAD_GRAPH_MODE", "operator-aware"),
+            getattr(config, "CELL_GRAPH_MODE", "operator-aware"),
             len(incoming),
             len(existing),
         )
-        heads = [thread.routing_text for thread in incoming]
+        heads = [cell.routing_text for cell in incoming]
         head_vectors = self.embedding_model.encode_documents(heads)
         # Source selection is defined over the original turns, so each node
         # embedding must represent the node text itself.  The cell head is
         # embedded separately and is used only for coarse cell routing.
         raw_node_texts = [
             node.text
-            for thread in incoming
-            for node in thread.nodes
+            for cell in incoming
+            for node in cell.nodes
         ]
         node_vectors = []
         if raw_node_texts:
@@ -218,16 +218,16 @@ class ThreadStore:
                 for vector in self.embedding_model.encode_documents(raw_node_texts)
             ]
         node_index = 0
-        for thread, head_vector in zip(incoming, head_vectors):
-            thread.embedding = [float(value) for value in self._as_list(head_vector)]
-            for node in thread.nodes:
+        for cell, head_vector in zip(incoming, head_vectors):
+            cell.embedding = [float(value) for value in self._as_list(head_vector)]
+            for node in cell.nodes:
                 if len(node_vectors):
                     node.embedding = [float(value) for value in node_vectors[node_index]]
                 node_index += 1
-            existing[thread.thread_id] = thread
+            existing[cell.cell_id] = cell
         materialized = sorted(
             existing.values(),
-            key=lambda thread: (thread.ordinal, thread.thread_id),
+            key=lambda cell: (cell.ordinal, cell.cell_id),
         )
         # Links are materialized once from source order and static locator
         # features. The operator-aware construction objective is query-free;
@@ -242,7 +242,7 @@ class ThreadStore:
             "GRAPH_MODE_RESOLVED self=%s normalized=%s config=%s class=%s module=%s",
             graph_mode,
             normalized_graph_mode,
-            getattr(config, "THREAD_GRAPH_MODE", None),
+            getattr(config, "CELL_GRAPH_MODE", None),
             type(self).__name__,
             type(self).__module__,
         )
@@ -250,24 +250,24 @@ class ThreadStore:
             logger.info("GRAPH_BRANCH selected=random-rewiring")
             self.last_graph_diagnostics = self._random_rewire_links(
                 materialized,
-                max_neighbors=int(getattr(config, "THREAD_GRAPH_NEIGHBORS", 3)),
-                min_similarity=float(getattr(config, "THREAD_GRAPH_MIN_SIM", 0.25)),
-                seed=int(getattr(config, "THREAD_GRAPH_RANDOM_SEED", 2026)),
+                max_neighbors=int(getattr(config, "CELL_GRAPH_NEIGHBORS", 3)),
+                min_similarity=float(getattr(config, "CELL_GRAPH_MIN_SIM", 0.25)),
+                seed=int(getattr(config, "CELL_GRAPH_RANDOM_SEED", 2026)),
                 swaps_per_edge=int(
-                    getattr(config, "THREAD_GRAPH_RANDOM_SWAPS_PER_EDGE", 10)
+                    getattr(config, "CELL_GRAPH_RANDOM_SWAPS_PER_EDGE", 10)
                 ),
             )
         elif normalized_graph_mode in {"initial", "legacy", "cosine", "knn"}:
             logger.info("GRAPH_BRANCH selected=initial")
-            self._build_thread_links(
+            self._build_cell_links(
                 materialized,
-                max_neighbors=int(getattr(config, "THREAD_GRAPH_NEIGHBORS", 3)),
-                min_similarity=float(getattr(config, "THREAD_GRAPH_MIN_SIM", 0.25)),
+                max_neighbors=int(getattr(config, "CELL_GRAPH_NEIGHBORS", 3)),
+                min_similarity=float(getattr(config, "CELL_GRAPH_MIN_SIM", 0.25)),
             )
             self.last_graph_diagnostics = {
                 "mode": "initial",
                 "candidate_edges": 0,
-                "selected_optional_edges": sum(len(thread.links) for thread in materialized) // 2,
+                "selected_optional_edges": sum(len(cell.links) for cell in materialized) // 2,
                 "mandatory_edges": 0,
                 "objective": 0.0,
             }
@@ -276,13 +276,13 @@ class ThreadStore:
             graph_compile_started = time.perf_counter()
             self.last_graph_diagnostics = self._compile_operator_links(
                 materialized,
-                max_neighbors=int(getattr(config, "THREAD_GRAPH_NEIGHBORS", 3)),
-                min_similarity=float(getattr(config, "THREAD_GRAPH_MIN_SIM", 0.25)),
-                candidate_multiplier=int(getattr(config, "THREAD_OPERATOR_CANDIDATE_MULTIPLIER", 3)),
-                sketch_dim=int(getattr(config, "THREAD_OPERATOR_SKETCH_DIM", 6)),
-                objective_scale=float(getattr(config, "THREAD_OPERATOR_OBJECTIVE_SCALE", 1.0)),
-                swap_search_width=int(getattr(config, "THREAD_OPERATOR_SWAP_SEARCH_WIDTH", 256)),
-                max_swaps=int(getattr(config, "THREAD_OPERATOR_MAX_SWAPS", 12)),
+                max_neighbors=int(getattr(config, "CELL_GRAPH_NEIGHBORS", 3)),
+                min_similarity=float(getattr(config, "CELL_GRAPH_MIN_SIM", 0.25)),
+                candidate_multiplier=int(getattr(config, "CELL_OPERATOR_CANDIDATE_MULTIPLIER", 3)),
+                sketch_dim=int(getattr(config, "CELL_OPERATOR_SKETCH_DIM", 6)),
+                objective_scale=float(getattr(config, "CELL_OPERATOR_OBJECTIVE_SCALE", 1.0)),
+                swap_search_width=int(getattr(config, "CELL_OPERATOR_SWAP_SEARCH_WIDTH", 256)),
+                max_swaps=int(getattr(config, "CELL_OPERATOR_MAX_SWAPS", 12)),
             )
             logger.info(
                 "GRAPH_COMPILE_DONE mode=operator-aware cells=%s elapsed_seconds=%.2f diagnostics=%s",
@@ -290,25 +290,25 @@ class ThreadStore:
                 time.perf_counter() - graph_compile_started,
                 self.last_graph_diagnostics,
             )
-        self._thread_cache = {
-            thread.thread_id: thread.copy(deep=True)
-            for thread in materialized
+        self._cell_cache = {
+            cell.cell_id: cell.copy(deep=True)
+            for cell in materialized
         }
         self._head_cache = {
-            thread.thread_id: InteractionThread(
-                thread_id=thread.thread_id,
-                head=thread.head,
-                session_id=thread.session_id,
-                ordinal=thread.ordinal,
-                start_timestamp=thread.start_timestamp,
-                end_timestamp=thread.end_timestamp,
-                links=[link.copy(deep=True) for link in thread.links],
-                embedding=list(thread.embedding),
+            cell.cell_id: MemoryCell(
+                cell_id=cell.cell_id,
+                head=cell.head,
+                session_id=cell.session_id,
+                ordinal=cell.ordinal,
+                start_timestamp=cell.start_timestamp,
+                end_timestamp=cell.end_timestamp,
+                links=[link.copy(deep=True) for link in cell.links],
+                embedding=list(cell.embedding),
             )
-            for thread in materialized
+            for cell in materialized
         }
-        rows = [self._thread_to_head_row(thread) for thread in materialized]
-        payload_rows = [self._thread_to_payload_row(thread) for thread in materialized]
+        rows = [self._cell_to_head_row(cell) for cell in materialized]
+        payload_rows = [self._cell_to_payload_row(cell) for cell in materialized]
         if self._use_lancedb:
             for name in (self.head_table_name, self.payload_table_name):
                 if name in self.db.table_names():
@@ -320,7 +320,7 @@ class ThreadStore:
         else:
             # The dependency-free fallback keeps one JSON file for portability;
             # the production LanceDB path physically separates heads and nodes.
-            self._rows = [self._thread_to_row(thread) for thread in materialized]
+            self._rows = [self._cell_to_row(cell) for cell in materialized]
             self._save_fallback()
         # Tables are rebuilt after every LoCoMo root. Invalidate the lazy maps
         # so no payload/head from the previous root can leak into expansion.
@@ -332,7 +332,7 @@ class ThreadStore:
             "GRAPH_BUILD_DONE mode=%s cells=%s edges=%s elapsed_seconds=%.2f",
             self.last_graph_diagnostics.get("mode", graph_mode),
             len(materialized),
-            sum(len(thread.links) for thread in materialized) // 2,
+            sum(len(cell.links) for cell in materialized) // 2,
             time.perf_counter() - graph_started,
         )
 
@@ -340,7 +340,7 @@ class ThreadStore:
         self,
         address: str,
         top_k: Optional[int] = 4,
-    ) -> Tuple[List[ThreadRoute], List[float]]:
+    ) -> Tuple[List[CellRoute], List[float]]:
         """Score cell locator texts and optionally keep the highest scores.
 
         The canonical paper path calls this method with ``top_k=None`` and
@@ -374,11 +374,11 @@ class ThreadStore:
                 scored = scored[: max(1, int(top_k))]
         self.last_route_comparisons = self.count()
         return [
-            ThreadRoute(self._hydrate_thread(row), float(score), rank)
+            CellRoute(self._hydrate_cell(row), float(score), rank)
             for rank, (row, score) in enumerate(scored, 1)
         ], [float(value) for value in query_values]
 
-    def route_seeds(self, address: str) -> Tuple[List[ThreadRoute], List[float]]:
+    def route_seeds(self, address: str) -> Tuple[List[CellRoute], List[float]]:
         """Return cells above the paper's mean-plus-standard-deviation cutoff."""
         routes, query_vector = self.route(address, top_k=None)
         if not routes:
@@ -400,9 +400,9 @@ class ThreadStore:
         return list(value)
 
     @staticmethod
-    def _node_routing_text(thread: InteractionThread, node: ThreadNode) -> str:
+    def _node_routing_text(cell: MemoryCell, node: SourceTurn) -> str:
         timestamp = f" [{node.timestamp}]" if node.timestamp else ""
-        return f"{thread.head}{timestamp}\n{node.text}"[:4000]
+        return f"{cell.head}{timestamp}\n{node.text}"[:4000]
 
     @staticmethod
     def _blend_vectors(raw: Sequence[float], contextual: Sequence[float]) -> List[float]:
@@ -412,49 +412,49 @@ class ThreadStore:
         norm = math.sqrt(sum(value * value for value in values))
         return [value / norm for value in values] if norm else values
 
-    def get_all_threads(self) -> List[InteractionThread]:
+    def get_all_cells(self) -> List[MemoryCell]:
         if not self._use_lancedb:
-            if not self._thread_cache and self._rows:
-                self._thread_cache = {
-                    thread.thread_id: thread
-                    for thread in (self._row_to_thread(row) for row in self._rows)
+            if not self._cell_cache and self._rows:
+                self._cell_cache = {
+                    cell.cell_id: cell
+                    for cell in (self._row_to_cell(row) for row in self._rows)
                 }
-            return [thread.copy(deep=True) for thread in self._thread_cache.values()]
-        if self._thread_cache:
-            return [thread.copy(deep=True) for thread in self._thread_cache.values()]
+            return [cell.copy(deep=True) for cell in self._cell_cache.values()]
+        if self._cell_cache:
+            return [cell.copy(deep=True) for cell in self._cell_cache.values()]
         head_rows = self.table.to_arrow().to_pylist()
         payload_rows = self.payload_table.to_arrow().to_pylist()
-        payload_by_id = {str(row["thread_id"]): row for row in payload_rows}
-        threads = [
-            self._hydrate_thread(row, payload_by_id.get(str(row["thread_id"])))
+        payload_by_id = {str(row["cell_id"]): row for row in payload_rows}
+        cells = [
+            self._hydrate_cell(row, payload_by_id.get(str(row["cell_id"])))
             for row in head_rows
         ]
-        self._thread_cache = {thread.thread_id: thread for thread in threads}
+        self._cell_cache = {cell.cell_id: cell for cell in cells}
         self._head_cache = {
-            thread.thread_id: self._row_to_head_thread(self._thread_to_head_row(thread))
-            for thread in threads
+            cell.cell_id: self._row_to_head_cell(self._cell_to_head_row(cell))
+            for cell in cells
         }
-        return [thread.copy(deep=True) for thread in threads]
+        return [cell.copy(deep=True) for cell in cells]
 
     def get_all_entries(self) -> List[MemoryEntry]:
         entries: List[MemoryEntry] = []
-        for thread in self.get_all_threads():
-            for node in thread.nodes:
+        for cell in self.get_all_cells():
+            for node in cell.nodes:
                 entries.append(MemoryEntry(
                     entry_id=node.node_id,
                     lossless_restatement=node.text,
                     timestamp=node.timestamp,
                     source_turn_ids=node.source_turn_ids,
-                    thread_id=thread.thread_id,
+                    cell_id=cell.cell_id,
                 ))
         return entries
 
     def expand(
         self,
-        routes: Sequence[ThreadRoute],
+        routes: Sequence[CellRoute],
         max_hops: int = 2,
-        max_threads: Optional[int] = None,
-    ) -> List[ThreadCandidate]:
+        max_cells: Optional[int] = None,
+    ) -> List[CellCandidate]:
         """Traverse routed links with best-first score propagation.
 
         FIFO traversal made the result depend on route order: a weak early
@@ -469,63 +469,63 @@ class ThreadStore:
             return []
         # Seed the cache with routed heads, then fetch only the head metadata
         # named by a traversed edge. This avoids a first-query scan of the
-        # complete head table; payloads are hydrated only for reached threads.
+        # complete head table; payloads are hydrated only for reached cells.
         headers = self._head_cache
         for route in routes:
             headers.setdefault(
-                route.thread.thread_id,
-                self._row_to_head_thread(self._thread_to_head_row(route.thread)),
+                route.cell.cell_id,
+                self._row_to_head_cell(self._cell_to_head_row(route.cell)),
             )
-        frontier: List[Tuple[float, int, int, str, int, ThreadCandidate]] = []
+        frontier: List[Tuple[float, int, int, str, int, CellCandidate]] = []
         push_order = 0
         # The method defines one propagation score for every (cell, hop)
         # state. Keeping only one score per cell can discard a lower-scoring
         # shorter path that is still able to reach another cell within H hops.
-        best_by_hop: Dict[Tuple[str, int], ThreadCandidate] = {}
+        best_by_hop: Dict[Tuple[str, int], CellCandidate] = {}
         discovered_by_hop: Dict[int, set[str]] = {}
         for route in routes:
-            candidate = ThreadCandidate(
-                self._hydrate_thread_from_header(route.thread),
+            candidate = CellCandidate(
+                self._hydrate_cell_from_header(route.cell),
                 route.score,
                 0,
-                [route.thread.thread_id],
+                [route.cell.cell_id],
             )
-            state_key = (route.thread.thread_id, 0)
+            state_key = (route.cell.cell_id, 0)
             previous = best_by_hop.get(state_key)
             if previous is None or candidate.route_score > previous.route_score:
                 best_by_hop[state_key] = candidate
-                discovered_by_hop.setdefault(0, set()).add(route.thread.thread_id)
+                discovered_by_hop.setdefault(0, set()).add(route.cell.cell_id)
                 heapq.heappush(
                     frontier,
-                    (-candidate.route_score, candidate.hop, route.rank, candidate.thread.thread_id, push_order, candidate),
+                    (-candidate.route_score, candidate.hop, route.rank, candidate.cell.cell_id, push_order, candidate),
                 )
                 push_order += 1
-        if max_threads is not None:
-            max_threads = max(1, int(max_threads))
+        if max_cells is not None:
+            max_cells = max(1, int(max_cells))
         while frontier:
-            _neg_score, _hop, _rank, _thread_id, _push_order, current = heapq.heappop(frontier)
-            state_key = (current.thread.thread_id, current.hop)
+            _neg_score, _hop, _rank, _cell_id, _push_order, current = heapq.heappop(frontier)
+            state_key = (current.cell.cell_id, current.hop)
             incumbent = best_by_hop.get(state_key)
             if incumbent is None or incumbent.path != current.path or incumbent.route_score > current.route_score + 1e-12:
                 continue
             if current.hop >= max(0, int(max_hops)):
                 continue
             for link in sorted(
-                current.thread.links,
-                key=lambda item: (-float(item.weight), item.target_thread_id),
+                current.cell.links,
+                key=lambda item: (-float(item.weight), item.target_cell_id),
             ):
                 self.last_expansion_edges += 1
                 next_hop = current.hop + 1
-                target_header = headers.get(link.target_thread_id)
+                target_header = headers.get(link.target_cell_id)
                 if target_header is None:
-                    target_header = self._load_head_thread(link.target_thread_id)
+                    target_header = self._load_head_cell(link.target_cell_id)
                     if target_header is not None:
-                        headers[target_header.thread_id] = target_header
+                        headers[target_header.cell_id] = target_header
                 if target_header is None:
                     self.last_expansion_trace.append(
                         {
-                            "from_cell_id": str(current.thread.thread_id),
-                            "to_cell_id": str(link.target_thread_id),
+                            "from_cell_id": str(current.cell.cell_id),
+                            "to_cell_id": str(link.target_cell_id),
                             "from_hop": int(current.hop),
                             "to_hop": int(next_hop),
                             "relation": str(link.relation),
@@ -536,12 +536,12 @@ class ThreadStore:
                         }
                     )
                     continue
-                target = self._hydrate_thread_from_header(target_header)
+                target = self._hydrate_cell_from_header(target_header)
                 if target is None:
                     self.last_expansion_trace.append(
                         {
-                            "from_cell_id": str(current.thread.thread_id),
-                            "to_cell_id": str(target_header.thread_id),
+                            "from_cell_id": str(current.cell.cell_id),
+                            "to_cell_id": str(target_header.cell_id),
                             "from_hop": int(current.hop),
                             "to_hop": int(next_hop),
                             "relation": str(link.relation),
@@ -557,13 +557,13 @@ class ThreadStore:
                 next_score = 0.5 * (
                     current.route_score + float(link.weight)
                 )
-                next_key = (target.thread_id, next_hop)
+                next_key = (target.cell_id, next_hop)
                 previous = best_by_hop.get(next_key)
                 if previous is not None and previous.route_score >= next_score:
                     self.last_expansion_trace.append(
                         {
-                            "from_cell_id": str(current.thread.thread_id),
-                            "to_cell_id": str(target_header.thread_id),
+                            "from_cell_id": str(current.cell.cell_id),
+                            "to_cell_id": str(target_header.cell_id),
                             "from_hop": int(current.hop),
                             "to_hop": int(next_hop),
                             "relation": str(link.relation),
@@ -574,13 +574,13 @@ class ThreadStore:
                         }
                     )
                     continue
-                candidate = ThreadCandidate(target, next_score, next_hop, current.path + [target.thread_id])
+                candidate = CellCandidate(target, next_score, next_hop, current.path + [target.cell_id])
                 best_by_hop[next_key] = candidate
-                discovered_by_hop.setdefault(next_hop, set()).add(target.thread_id)
+                discovered_by_hop.setdefault(next_hop, set()).add(target.cell_id)
                 self.last_expansion_trace.append(
                     {
-                        "from_cell_id": str(current.thread.thread_id),
-                        "to_cell_id": str(target.thread_id),
+                        "from_cell_id": str(current.cell.cell_id),
+                        "to_cell_id": str(target.cell_id),
                         "from_hop": int(current.hop),
                         "to_hop": int(next_hop),
                         "relation": str(link.relation),
@@ -592,13 +592,13 @@ class ThreadStore:
                 )
                 heapq.heappush(
                     frontier,
-                    (-candidate.route_score, candidate.hop, 999, candidate.thread.thread_id, push_order, candidate),
+                    (-candidate.route_score, candidate.hop, 999, candidate.cell.cell_id, push_order, candidate),
                 )
                 push_order += 1
-        route_order = {route.thread.thread_id: route.rank for route in routes}
-        best: Dict[str, ThreadCandidate] = {}
+        route_order = {route.cell.cell_id: route.rank for route in routes}
+        best: Dict[str, CellCandidate] = {}
         for candidate in best_by_hop.values():
-            previous = best.get(candidate.thread.thread_id)
+            previous = best.get(candidate.cell.cell_id)
             if previous is None or (
                 candidate.route_score > previous.route_score + 1e-12
                 or (
@@ -606,33 +606,33 @@ class ThreadStore:
                     and candidate.hop < previous.hop
                 )
             ):
-                best[candidate.thread.thread_id] = candidate
+                best[candidate.cell.cell_id] = candidate
         # A local expansion may add context, but it must never discard a
         # routed seed. Preserve all seeds first, then fill the receptive field
         # with the strongest propagated neighbors.
         routed = [
             item
             for item in best.values()
-            if item.thread.thread_id in route_order
+            if item.cell.cell_id in route_order
         ]
-        routed.sort(key=lambda item: route_order[item.thread.thread_id])
-        routed_ids = {item.thread.thread_id for item in routed}
+        routed.sort(key=lambda item: route_order[item.cell.cell_id])
+        routed_ids = {item.cell.cell_id for item in routed}
         neighbors = sorted(
             (
                 item
                 for item in best.values()
-                if item.thread.thread_id not in routed_ids
+                if item.cell.cell_id not in routed_ids
             ),
             key=lambda item: (
                 -item.route_score,
                 item.hop,
-                item.thread.ordinal,
-                item.thread.thread_id,
+                item.cell.ordinal,
+                item.cell.cell_id,
             ),
         )
         bounded = routed + neighbors
-        if max_threads is not None:
-            bounded = bounded[:max_threads]
+        if max_cells is not None:
+            bounded = bounded[:max_cells]
         hop_limit = max(0, int(max_hops))
         self.last_expansion_by_hop = [
             {
@@ -653,8 +653,8 @@ class ThreadStore:
         return dot / (left_norm * right_norm) if left_norm and right_norm else 0.0
 
     @staticmethod
-    def _build_thread_links(
-        threads: List[InteractionThread],
+    def _build_cell_links(
+        cells: List[MemoryCell],
         max_neighbors: int = 3,
         min_similarity: float = 0.25,
     ) -> None:
@@ -667,44 +667,44 @@ class ThreadStore:
         """
         logger = logging.getLogger("paired_graph.graph")
         pairwise_started = time.perf_counter()
-        logger.info("GRAPH_BASELINE_START cells=%s", len(threads))
-        for thread in threads:
-            thread.links = []
+        logger.info("GRAPH_BASELINE_START cells=%s", len(cells))
+        for cell in cells:
+            cell.links = []
         similarities: Dict[Tuple[str, str], float] = {}
-        def add_edge(left: InteractionThread, right: InteractionThread, relation: str, weight: float) -> None:
+        def add_edge(left: MemoryCell, right: MemoryCell, relation: str, weight: float) -> None:
             # The same pair can receive a chronology edge and a semantic edge;
             # retain the stronger interpretation once.
             for existing in left.links:
-                if existing.target_thread_id == right.thread_id:
+                if existing.target_cell_id == right.cell_id:
                     existing.weight = max(existing.weight, weight)
                     if existing.relation != "chronology-next" and relation == "chronology-next":
                         existing.relation = relation
                     return
-            left.links.append(ThreadLink(
-                target_thread_id=right.thread_id,
+            left.links.append(CellLink(
+                target_cell_id=right.cell_id,
                 relation=relation,
                 weight=float(weight),
             ))
 
         chronology_pairs: set[Tuple[str, str]] = set()
-        ordered = sorted(threads, key=lambda item: (item.ordinal, item.thread_id))
+        ordered = sorted(cells, key=lambda item: (item.ordinal, item.cell_id))
         for left, right in zip(ordered, ordered[1:]):
-            chronology_pairs.add((left.thread_id, right.thread_id))
-            chronology_pairs.add((right.thread_id, left.thread_id))
+            chronology_pairs.add((left.cell_id, right.cell_id))
+            chronology_pairs.add((right.cell_id, left.cell_id))
 
-        report_every = max(1, len(threads) // 10)
-        for index, left in enumerate(threads):
+        report_every = max(1, len(cells) // 10)
+        for index, left in enumerate(cells):
             if index % report_every == 0:
                 logger.info(
                     "GRAPH_BASELINE_PROGRESS rows=%s/%s elapsed_seconds=%.1f",
                     index,
-                    len(threads),
+                    len(cells),
                     time.perf_counter() - pairwise_started,
                 )
-            for right in threads[index + 1:]:
-                adjacent = (left.thread_id, right.thread_id) in chronology_pairs
-                similarity = ThreadStore._cosine(left.embedding, right.embedding)
-                similarities[tuple(sorted((left.thread_id, right.thread_id)))] = similarity
+            for right in cells[index + 1:]:
+                adjacent = (left.cell_id, right.cell_id) in chronology_pairs
+                similarity = CellGraphStore._cosine(left.embedding, right.embedding)
+                similarities[tuple(sorted((left.cell_id, right.cell_id)))] = similarity
                 if adjacent:
                     add_edge(left, right, "chronology-next", 1.0)
                     add_edge(right, left, "chronology-next", 1.0)
@@ -713,7 +713,7 @@ class ThreadStore:
         mean = sum(values) / max(1, len(values))
         variance = sum((value - mean) ** 2 for value in values) / max(1, len(values))
         threshold = mean + math.sqrt(max(0.0, variance))
-        by_id = {thread.thread_id: thread for thread in threads}
+        by_id = {cell.cell_id: cell for cell in cells}
         for (left_id, right_id), similarity in similarities.items():
             if similarity < threshold:
                 continue
@@ -723,14 +723,14 @@ class ThreadStore:
             add_edge(right, left, "semantic", weight)
         logger.info(
             "GRAPH_BASELINE_DONE cells=%s edges=%s elapsed_seconds=%.1f",
-            len(threads),
-            sum(len(thread.links) for thread in threads) // 2,
+            len(cells),
+            sum(len(cell.links) for cell in cells) // 2,
             time.perf_counter() - pairwise_started,
         )
 
     @staticmethod
     def _random_rewire_links(
-        threads: List[InteractionThread],
+        cells: List[MemoryCell],
         max_neighbors: int = 3,
         min_similarity: float = 0.25,
         seed: int = 2026,
@@ -739,8 +739,8 @@ class ThreadStore:
         """Randomize optional semantic edges with chronology and degrees fixed."""
         logger = logging.getLogger("paired_graph.graph")
         rewiring_started = time.perf_counter()
-        ThreadStore._build_thread_links(
-            threads,
+        CellGraphStore._build_cell_links(
+            cells,
             max_neighbors=max_neighbors,
             min_similarity=min_similarity,
         )
@@ -750,9 +750,9 @@ class ThreadStore:
 
         chronology: set[Tuple[str, str]] = set()
         optional: set[Tuple[str, str]] = set()
-        for thread in threads:
-            for link in thread.links:
-                pair = key(thread.thread_id, link.target_thread_id)
+        for cell in cells:
+            for link in cell.links:
+                pair = key(cell.cell_id, link.target_cell_id)
                 if link.relation == "chronology-next":
                     chronology.add(pair)
                 else:
@@ -760,7 +760,7 @@ class ThreadStore:
 
         edges = sorted(optional)
         edge_set = set(edges)
-        degrees = {thread.thread_id: 0 for thread in threads}
+        degrees = {cell.cell_id: 0 for cell in cells}
         for left, right in edges:
             degrees[left] += 1
             degrees[right] += 1
@@ -816,38 +816,38 @@ class ThreadStore:
             edges[first_index], edges[second_index] = replacements
             accepted += 1
 
-        thread_by_id = {thread.thread_id: thread for thread in threads}
-        for thread in threads:
-            thread.links = []
+        cell_by_id = {cell.cell_id: cell for cell in cells}
+        for cell in cells:
+            cell.links = []
         for left, right in sorted(chronology):
-            thread_by_id[left].links.append(ThreadLink(
-                target_thread_id=right,
+            cell_by_id[left].links.append(CellLink(
+                target_cell_id=right,
                 relation="chronology-next",
                 weight=1.0,
             ))
-            thread_by_id[right].links.append(ThreadLink(
-                target_thread_id=left,
+            cell_by_id[right].links.append(CellLink(
+                target_cell_id=left,
                 relation="chronology-next",
                 weight=1.0,
             ))
         for left, right in sorted(edge_set):
-            similarity = ThreadStore._cosine(
-                thread_by_id[left].embedding,
-                thread_by_id[right].embedding,
+            similarity = CellGraphStore._cosine(
+                cell_by_id[left].embedding,
+                cell_by_id[right].embedding,
             )
             weight = (similarity + 1.0) / 2.0
-            thread_by_id[left].links.append(ThreadLink(
-                target_thread_id=right,
+            cell_by_id[left].links.append(CellLink(
+                target_cell_id=right,
                 relation="semantic",
                 weight=weight,
             ))
-            thread_by_id[right].links.append(ThreadLink(
-                target_thread_id=left,
+            cell_by_id[right].links.append(CellLink(
+                target_cell_id=left,
                 relation="semantic",
                 weight=weight,
             ))
 
-        final_degrees = {thread.thread_id: 0 for thread in threads}
+        final_degrees = {cell.cell_id: 0 for cell in cells}
         for left, right in edge_set:
             final_degrees[left] += 1
             final_degrees[right] += 1
@@ -877,7 +877,7 @@ class ThreadStore:
 
     @staticmethod
     def _compile_operator_links(
-        threads: List[InteractionThread],
+        cells: List[MemoryCell],
         max_neighbors: int = 3,
         min_similarity: float = 0.25,
         candidate_multiplier: int = 3,
@@ -896,9 +896,9 @@ class ThreadStore:
         a construction-time objective: no query or answer evidence enters
         this function.
         """
-        for thread in threads:
-            thread.links = []
-        count = len(threads)
+        for cell in cells:
+            cell.links = []
+        count = len(cells)
         logger = logging.getLogger("paired_graph.graph")
         compiler_started = time.perf_counter()
         logger.info("GRAPH_COMPILER_START cells=%s", count)
@@ -929,21 +929,21 @@ class ThreadStore:
         objective_scale = max(0.0, float(objective_scale))
         swap_search_width = max(1, int(swap_search_width))
         max_swaps = max(0, int(max_swaps))
-        index = {thread.thread_id: position for position, thread in enumerate(threads)}
+        index = {cell.cell_id: position for position, cell in enumerate(cells)}
 
         def key(left: str, right: str) -> Tuple[str, str]:
             return (left, right) if left < right else (right, left)
 
         chronology: set[Tuple[str, str]] = set()
-        ordered = sorted(threads, key=lambda item: (item.ordinal, item.thread_id))
+        ordered = sorted(cells, key=lambda item: (item.ordinal, item.cell_id))
         for left, right in zip(ordered, ordered[1:]):
-            chronology.add(key(left.thread_id, right.thread_id))
+            chronology.add(key(left.cell_id, right.cell_id))
 
         pair_similarity: Dict[Tuple[str, str], float] = {}
         all_pairs: List[Tuple[float, str, str]] = []
         pairwise_started = time.perf_counter()
         report_every = max(1, count // 10)
-        for left_position, left in enumerate(threads):
+        for left_position, left in enumerate(cells):
             if left_position % report_every == 0:
                 logger.info(
                     "GRAPH_PAIRWISE_PROGRESS rows=%s/%s elapsed_seconds=%.1f",
@@ -951,11 +951,11 @@ class ThreadStore:
                     count,
                     time.perf_counter() - pairwise_started,
                 )
-            for right in threads[left_position + 1:]:
-                similarity = ThreadStore._cosine(left.embedding, right.embedding)
-                pair = key(left.thread_id, right.thread_id)
+            for right in cells[left_position + 1:]:
+                similarity = CellGraphStore._cosine(left.embedding, right.embedding)
+                pair = key(left.cell_id, right.cell_id)
                 pair_similarity[pair] = similarity
-                all_pairs.append((similarity, left.thread_id, right.thread_id))
+                all_pairs.append((similarity, left.cell_id, right.cell_id))
         logger.info(
             "GRAPH_PAIRWISE_DONE cells=%s pairs=%s elapsed_seconds=%.1f",
             count,
@@ -1000,16 +1000,16 @@ class ThreadStore:
                 if len(candidate_pairs) >= baseline_budget:
                     break
 
-        def deterministic_probe(thread_id: str, column: int) -> float:
+        def deterministic_probe(cell_id: str, column: int) -> float:
             import hashlib
             digest = hashlib.sha256(
-                f"memrewire-probe-v1|{thread_id}|{column}".encode("utf-8")
+                f"memrewire-probe-v1|{cell_id}|{column}".encode("utf-8")
             ).digest()
             return 1.0 if digest[0] & 1 else -1.0
 
         probes = [
-            [deterministic_probe(thread.thread_id, column) for column in range(sketch_dim)]
-            for thread in threads
+            [deterministic_probe(cell.cell_id, column) for column in range(sketch_dim)]
+            for cell in cells
         ]
         if sketch_dim >= 1:
             for row in probes:
@@ -1019,9 +1019,9 @@ class ThreadStore:
             for position, row in enumerate(probes):
                 row[1] = 2.0 * position / denominator - 1.0
 
-        horizon = max(0, int(getattr(config, "THREAD_OPERATOR_HORIZON", 3)))
-        lambda_bal = float(getattr(config, "THREAD_OPERATOR_LAMBDA_BAL", 1.0 / 40.0))
-        epsilon = float(getattr(config, "THREAD_OPERATOR_EPS", 1e-6))
+        horizon = max(0, int(getattr(config, "CELL_OPERATOR_HORIZON", 3)))
+        lambda_bal = float(getattr(config, "CELL_OPERATOR_LAMBDA_BAL", 1.0 / 40.0))
+        epsilon = float(getattr(config, "CELL_OPERATOR_EPS", 1e-6))
 
         # Derive an explicit optional-degree budget for every vertex from the
         # initial graph. Chronology is mandatory and is not charged against
@@ -1030,21 +1030,21 @@ class ThreadStore:
         # optional degree.
         baseline_optional = baseline_pairs - chronology
         optional_degree_caps: Dict[str, int] = {
-            thread.thread_id: 0 for thread in threads
+            cell.cell_id: 0 for cell in cells
         }
         for left_id, right_id in baseline_optional:
             optional_degree_caps[left_id] += 1
             optional_degree_caps[right_id] += 1
 
         def optional_degrees(selected_pairs: set[Tuple[str, str]]) -> Dict[str, int]:
-            degrees = {thread.thread_id: 0 for thread in threads}
+            degrees = {cell.cell_id: 0 for cell in cells}
             for left_id, right_id in selected_pairs - chronology:
                 degrees[left_id] += 1
                 degrees[right_id] += 1
             return degrees
 
         def weighted_degrees(selected_pairs: set[Tuple[str, str]]) -> List[float]:
-            values = [0.0 for _ in threads]
+            values = [0.0 for _ in cells]
             for left_id, right_id in selected_pairs:
                 similarity = pair_similarity.get((left_id, right_id), 0.0)
                 weight = 1.0 if (left_id, right_id) in chronology else (similarity + 1.0) / 2.0
@@ -1056,8 +1056,8 @@ class ThreadStore:
 
         def objective(selected_pairs: set[Tuple[str, str]]) -> float:
             """Diagonal log-volume surrogate for finite-horizon reachability."""
-            adjacency: List[List[Tuple[int, float]]] = [[] for _ in threads]
-            degree = [0.0 for _ in threads]
+            adjacency: List[List[Tuple[int, float]]] = [[] for _ in cells]
+            degree = [0.0 for _ in cells]
             for left_id, right_id in selected_pairs:
                 left_position = index[left_id]
                 right_position = index[right_id]
@@ -1077,7 +1077,7 @@ class ThreadStore:
                 for row in state
             ]
             for step in range(horizon):
-                next_state = [[0.0 for _ in range(sketch_dim)] for _ in threads]
+                next_state = [[0.0 for _ in range(sketch_dim)] for _ in cells]
                 for position, neighbors in enumerate(adjacency):
                     if not neighbors:
                         continue
@@ -1294,9 +1294,9 @@ class ThreadStore:
             gains.append(best_gain)
             rewiring_swaps += 1
 
-        def add_edge(left: InteractionThread, right: InteractionThread, relation: str, weight: float) -> None:
-            left.links.append(ThreadLink(
-                target_thread_id=right.thread_id,
+        def add_edge(left: MemoryCell, right: MemoryCell, relation: str, weight: float) -> None:
+            left.links.append(CellLink(
+                target_cell_id=right.cell_id,
                 relation=relation,
                 weight=float(weight),
             ))
@@ -1305,8 +1305,8 @@ class ThreadStore:
             selected,
             key=lambda pair: (index[pair[0]], index[pair[1]]),
         ):
-            left = threads[index[left_id]]
-            right = threads[index[right_id]]
+            left = cells[index[left_id]]
+            right = cells[index[right_id]]
             similarity = pair_similarity.get((left_id, right_id), 0.0)
             if (left_id, right_id) in chronology:
                 relation = "chronology-next"
@@ -1335,8 +1335,8 @@ class ThreadStore:
             "max_optional_degree_cap": max(optional_degree_caps.values(), default=0),
             "max_selected_optional_degree": max(optional_degrees_now.values(), default=0),
             "degree_cap_satisfied": all(
-                optional_degrees_now[thread_id] == optional_degree_caps[thread_id]
-                for thread_id in optional_degrees_now
+                optional_degrees_now[cell_id] == optional_degree_caps[cell_id]
+                for cell_id in optional_degrees_now
             ),
             "rewiring_swaps": rewiring_swaps,
             "candidate_switches": candidate_switches,
@@ -1344,7 +1344,7 @@ class ThreadStore:
             "cross_session_edges": sum(
                 1
                 for left_id, right_id in selected
-                if threads[index[left_id]].session_id != threads[index[right_id]].session_id
+                if cells[index[left_id]].session_id != cells[index[right_id]].session_id
             ),
         }
         logger.info(
@@ -1359,40 +1359,40 @@ class ThreadStore:
         return diagnostics
 
     @staticmethod
-    def _thread_to_head_row(thread: InteractionThread) -> Dict[str, Any]:
+    def _cell_to_head_row(cell: MemoryCell) -> Dict[str, Any]:
         return {
-            "thread_id": thread.thread_id,
-            "head": thread.head,
-            "session_id": thread.session_id or "",
-            "ordinal": int(thread.ordinal),
-            "start_timestamp": thread.start_timestamp or "",
-            "end_timestamp": thread.end_timestamp or "",
-            "links_json": json.dumps([link.dict() for link in thread.links], ensure_ascii=True),
-            "vector": list(thread.embedding),
+            "cell_id": cell.cell_id,
+            "head": cell.head,
+            "session_id": cell.session_id or "",
+            "ordinal": int(cell.ordinal),
+            "start_timestamp": cell.start_timestamp or "",
+            "end_timestamp": cell.end_timestamp or "",
+            "links_json": json.dumps([link.dict() for link in cell.links], ensure_ascii=True),
+            "vector": list(cell.embedding),
         }
 
     @staticmethod
-    def _thread_to_payload_row(thread: InteractionThread) -> Dict[str, Any]:
+    def _cell_to_payload_row(cell: MemoryCell) -> Dict[str, Any]:
         return {
-            "thread_id": thread.thread_id,
+            "cell_id": cell.cell_id,
             "nodes_json": json.dumps(
-                [node.dict() for node in thread.nodes],
+                [node.dict() for node in cell.nodes],
                 ensure_ascii=True,
             ),
         }
 
     @staticmethod
-    def _thread_to_row(thread: InteractionThread) -> Dict[str, Any]:
+    def _cell_to_row(cell: MemoryCell) -> Dict[str, Any]:
         """Compatibility row for the dependency-free JSON backend."""
-        row = ThreadStore._thread_to_head_row(thread)
+        row = CellGraphStore._cell_to_head_row(cell)
         row["nodes_json"] = json.dumps(
-            [node.dict() for node in thread.nodes],
+            [node.dict() for node in cell.nodes],
             ensure_ascii=True,
         )
         return row
 
     @staticmethod
-    def _row_to_thread(row: Dict[str, Any]) -> InteractionThread:
+    def _row_to_cell(row: Dict[str, Any]) -> MemoryCell:
         def parse_json(value: Any, default: Any) -> Any:
             if isinstance(value, str):
                 try:
@@ -1401,20 +1401,20 @@ class ThreadStore:
                     return default
             return value if value is not None else default
 
-        return InteractionThread(
-            thread_id=str(row["thread_id"]),
+        return MemoryCell(
+            cell_id=str(row["cell_id"]),
             head=str(row.get("head") or ""),
             session_id=str(row.get("session_id") or "") or None,
             ordinal=int(row.get("ordinal") or 0),
             start_timestamp=str(row.get("start_timestamp") or "") or None,
             end_timestamp=str(row.get("end_timestamp") or "") or None,
-            nodes=[ThreadNode(**item) for item in parse_json(row.get("nodes_json"), [])],
-            links=[ThreadLink(**item) for item in parse_json(row.get("links_json"), [])],
+            nodes=[SourceTurn(**item) for item in parse_json(row.get("nodes_json"), [])],
+            links=[CellLink(**item) for item in parse_json(row.get("links_json"), [])],
             embedding=[float(value) for value in (row.get("vector") or [])],
         )
 
     @staticmethod
-    def _row_to_head_thread(row: Dict[str, Any]) -> InteractionThread:
+    def _row_to_head_cell(row: Dict[str, Any]) -> MemoryCell:
         """Decode a LanceDB head row without loading node payloads."""
         def parse_json(value: Any, default: Any) -> Any:
             if isinstance(value, str):
@@ -1424,15 +1424,15 @@ class ThreadStore:
                     return default
             return value if value is not None else default
 
-        return InteractionThread(
-            thread_id=str(row["thread_id"]),
+        return MemoryCell(
+            cell_id=str(row["cell_id"]),
             head=str(row.get("head") or ""),
             session_id=str(row.get("session_id") or "") or None,
             ordinal=int(row.get("ordinal") or 0),
             start_timestamp=str(row.get("start_timestamp") or "") or None,
             end_timestamp=str(row.get("end_timestamp") or "") or None,
             nodes=[],
-            links=[ThreadLink(**item) for item in parse_json(row.get("links_json"), [])],
+            links=[CellLink(**item) for item in parse_json(row.get("links_json"), [])],
             embedding=[float(value) for value in (row.get("vector") or [])],
         )
 
@@ -1458,9 +1458,9 @@ class ThreadStore:
             else:
                 rows = list(self._rows)
             self._payload_index = {
-                str(row.get("thread_id")): row
+                str(row.get("cell_id")): row
                 for row in rows
-                if row.get("thread_id") is not None
+                if row.get("cell_id") is not None
             }
             return self._payload_index
 
@@ -1480,22 +1480,22 @@ class ThreadStore:
             else:
                 rows = list(self._rows)
             self._head_index = {
-                str(row.get("thread_id")): row
+                str(row.get("cell_id")): row
                 for row in rows
-                if row.get("thread_id") is not None
+                if row.get("cell_id") is not None
             }
             return self._head_index
 
-    def _load_payload_row(self, thread_id: str) -> Optional[Dict[str, Any]]:
-        row = self._ensure_payload_index().get(str(thread_id))
+    def _load_payload_row(self, cell_id: str) -> Optional[Dict[str, Any]]:
+        row = self._ensure_payload_index().get(str(cell_id))
         if row is None and self._use_lancedb and self._payload_index_load_failed:
             # Preserve compatibility with LanceDB versions that cannot expose
             # an Arrow snapshot; this path is only a failure fallback.
             try:
-                escaped = str(thread_id).replace("'", "''")
+                escaped = str(cell_id).replace("'", "''")
                 rows = (
                     self.payload_table.search()
-                    .where(f"thread_id = '{escaped}'", prefilter=True)
+                    .where(f"cell_id = '{escaped}'", prefilter=True)
                     .limit(1)
                     .to_list()
                 )
@@ -1503,20 +1503,20 @@ class ThreadStore:
             except Exception:
                 row = None
         if row is not None:
-            self._payload_cache[str(thread_id)] = row
+            self._payload_cache[str(cell_id)] = row
         return row
 
-    def _load_head_thread(self, thread_id: str) -> Optional[InteractionThread]:
+    def _load_head_cell(self, cell_id: str) -> Optional[MemoryCell]:
         """Load one lightweight head row for a graph edge target."""
-        if thread_id in self._head_cache:
-            return self._head_cache[thread_id]
-        row = self._ensure_head_index().get(str(thread_id))
+        if cell_id in self._head_cache:
+            return self._head_cache[cell_id]
+        row = self._ensure_head_index().get(str(cell_id))
         if row is None and self._use_lancedb and self._head_index_load_failed:
             try:
-                escaped = str(thread_id).replace("'", "''")
+                escaped = str(cell_id).replace("'", "''")
                 rows = (
                     self.table.search()
-                    .where(f"thread_id = '{escaped}'", prefilter=True)
+                    .where(f"cell_id = '{escaped}'", prefilter=True)
                     .limit(1)
                     .to_list()
                 )
@@ -1525,21 +1525,21 @@ class ThreadStore:
                 row = None
         if row is None:
             return None
-        header = self._row_to_head_thread(row)
-        self._head_cache[thread_id] = header
+        header = self._row_to_head_cell(row)
+        self._head_cache[cell_id] = header
         return header
 
-    def _hydrate_thread(
+    def _hydrate_cell(
         self,
         head_row: Dict[str, Any],
         payload_row: Optional[Dict[str, Any]] = None,
-    ) -> InteractionThread:
+    ) -> MemoryCell:
         if not self._use_lancedb:
-            thread_id = str(head_row.get("thread_id"))
-            cached = self._thread_cache.get(thread_id)
-            return cached.copy(deep=True) if cached is not None else self._row_to_thread(head_row)
-        header = self._row_to_head_thread(head_row)
-        payload_row = payload_row or self._load_payload_row(header.thread_id)
+            cell_id = str(head_row.get("cell_id"))
+            cached = self._cell_cache.get(cell_id)
+            return cached.copy(deep=True) if cached is not None else self._row_to_cell(head_row)
+        header = self._row_to_head_cell(head_row)
+        payload_row = payload_row or self._load_payload_row(header.cell_id)
         if payload_row:
             raw_nodes = payload_row.get("nodes_json")
             if isinstance(raw_nodes, str):
@@ -1547,16 +1547,16 @@ class ThreadStore:
                     raw_nodes = json.loads(raw_nodes)
                 except json.JSONDecodeError:
                     raw_nodes = []
-            header.nodes = [ThreadNode(**item) for item in (raw_nodes or [])]
+            header.nodes = [SourceTurn(**item) for item in (raw_nodes or [])]
         return header
 
-    def _hydrate_thread_from_header(self, header: InteractionThread) -> InteractionThread:
+    def _hydrate_cell_from_header(self, header: MemoryCell) -> MemoryCell:
         if not self._use_lancedb:
-            cached = self._thread_cache.get(header.thread_id)
+            cached = self._cell_cache.get(header.cell_id)
             return cached.copy(deep=True) if cached is not None else header
         if header.nodes:
             return header
-        row = self._load_payload_row(header.thread_id)
+        row = self._load_payload_row(header.cell_id)
         if row:
             raw_nodes = row.get("nodes_json")
             if isinstance(raw_nodes, str):
@@ -1564,5 +1564,5 @@ class ThreadStore:
                     raw_nodes = json.loads(raw_nodes)
                 except json.JSONDecodeError:
                     raw_nodes = []
-            header.nodes = [ThreadNode(**item) for item in (raw_nodes or [])]
+            header.nodes = [SourceTurn(**item) for item in (raw_nodes or [])]
         return header

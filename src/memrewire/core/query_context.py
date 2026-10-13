@@ -18,11 +18,11 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, Field, PrivateAttr
 
-from memrewire.core.models.memory_entry import InteractionThread
-from memrewire.core.thread_store import ThreadCandidate
+from memrewire.core.models.memory_entry import MemoryCell
+from memrewire.core.cell_graph_store import CellCandidate
 
 
-class WorkspaceEvidence(BaseModel):
+class ContextEvidence(BaseModel):
     """A source cell exposed by one transient activation field.
 
     All state diagnostics are query-local.  The continuous role coordinates
@@ -31,10 +31,10 @@ class WorkspaceEvidence(BaseModel):
     """
 
     evidence_id: str
-    thread_id: str
+    cell_id: str
     node_id: str
     text: str
-    thread_head: str = ""
+    cell_head: str = ""
     source_turn_ids: List[str] = Field(default_factory=list)
     role: str = "context"
     contribution: str = "context"
@@ -49,42 +49,42 @@ class WorkspaceEvidence(BaseModel):
     state_stability: float = 0.0
     readout_score: float = 0.0
     # Canonical functional representation. These coordinates are inferred
-    # from the query-local field and are never persisted in ThreadStore.
+    # from the query-local field and are never persisted in CellGraphStore.
     functional_role: str = "context"
     role_vector: Dict[str, float] = Field(default_factory=dict)
     query_drive: float = 0.0
     local_support: float = 0.0
     relay_mediation: float = 0.0
     marginal_gain: float = 0.0
-    thread_ordinal: int = 0
-    thread_rank: int = 0
+    cell_ordinal: int = 0
+    cell_rank: int = 0
     ordinal: int = 0
     timestamp: Optional[str] = None
 
 
-class WorkspaceRelation(BaseModel):
+class ContextRelation(BaseModel):
     source_evidence_id: str
     target_evidence_id: str
     relation_type: str
     anchors: List[str] = Field(default_factory=list)
 
 
-class MemoryWorkspace(BaseModel):
+class QueryContext(BaseModel):
     """Ephemeral query-conditioned state handed to the answer model."""
 
-    workspace_id: str
+    query_context_id: str
     query: str
     address: str = ""
     question_type: str = "general"
     complexity: str = "LOW"
-    evidence: List[WorkspaceEvidence] = Field(default_factory=list)
-    relations: List[WorkspaceRelation] = Field(default_factory=list)
+    evidence: List[ContextEvidence] = Field(default_factory=list)
+    relations: List[ContextRelation] = Field(default_factory=list)
     sufficient: bool = False
     assembly_mode: str = "transient-assembly"
     inference_family: str = "transient-role-binding"
     source_candidate_count: int = 0
-    routed_thread_count: int = 0
-    expanded_thread_count: int = 0
+    routed_cell_count: int = 0
+    expanded_cell_count: int = 0
     node_candidate_count: int = 0
     visible_span_count: int = 0
     routed_source_turn_ids: List[str] = Field(default_factory=list)
@@ -107,16 +107,16 @@ class MemoryWorkspace(BaseModel):
     topology_cross_session_edges: int = 0
     global_route_calls: int = 1
     address_planner_calls: int = 0
-    indexed_thread_count: int = 0
+    indexed_cell_count: int = 0
     local_edge_visits: int = 0
     # Address and receptive-field diagnostics.
     route_probe_count: int = 0
     route_width: int = 0
     receptive_field_scope: int = 0
     adaptive_route: bool = False
-    routed_thread_ids: List[str] = Field(default_factory=list)
-    expanded_thread_ids: List[str] = Field(default_factory=list)
-    candidate_thread_ids: List[str] = Field(default_factory=list)
+    routed_cell_ids: List[str] = Field(default_factory=list)
+    expanded_cell_ids: List[str] = Field(default_factory=list)
+    candidate_cell_ids: List[str] = Field(default_factory=list)
     candidate_node_ids: List[str] = Field(default_factory=list)
     visible_node_ids: List[str] = Field(default_factory=list)
     role_binding_mode: str = "field-coupled"
@@ -144,26 +144,26 @@ class MemoryWorkspace(BaseModel):
     _legacy_item_guard: Optional[int] = PrivateAttr(default=None)
 
     @property
-    def entries(self) -> List[WorkspaceEvidence]:
+    def entries(self) -> List[ContextEvidence]:
         return list(self.evidence)
 
     @property
-    def assembly_cells(self) -> List[WorkspaceEvidence]:
+    def assembly_cells(self) -> List[ContextEvidence]:
         """Canonical name for the cells exposed by the transient field."""
         return list(self.evidence)
 
     @property
     def assembly_id(self) -> str:
         """Canonical identifier for one query-local state."""
-        return self.workspace_id
+        return self.query_context_id
 
     @property
-    def role_bound_cells(self) -> List[WorkspaceEvidence]:
+    def role_bound_cells(self) -> List[ContextEvidence]:
         """Canonical view of cells carrying transient role coordinates."""
         return list(self.evidence)
 
     @property
-    def selected_thread_count(self) -> int:
+    def selected_cell_count(self) -> int:
         """Legacy alias for the number of visible source spans."""
         return self.visible_span_count
 
@@ -233,7 +233,7 @@ class MemoryWorkspace(BaseModel):
         return self.activation_energy
 
 
-class TransientRoleBindingBuilder:
+class QueryContextBuilder:
     """Infer a query-local assembly with one shared recurrent operator.
 
     The builder keeps the source substrate fixed.  A query supplies an initial
@@ -344,7 +344,7 @@ class TransientRoleBindingBuilder:
         """Infer rendering/organization hints without creating a search query.
 
         The evaluator's categories are not exposed to the system.  These
-        conservative lexical cues only choose how an already-built workspace
+        conservative lexical cues only choose how an already-built query_context
         is presented to the answer model; they never alter the global route or
         add a retrieval channel.
         """
@@ -398,18 +398,18 @@ class TransientRoleBindingBuilder:
         address: str,
         query_vector: Sequence[float],
         routes: Sequence[Any],
-        expanded: Sequence[ThreadCandidate],
+        expanded: Sequence[CellCandidate],
         plan: Optional[Dict[str, Any]] = None,
-    ) -> MemoryWorkspace:
+    ) -> QueryContext:
         question_type, complexity = self._plan_state(plan, query)
-        key = "|".join([query, address, *(item.thread.thread_id for item in expanded)])
-        workspace_id = "ws-" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+        key = "|".join([query, address, *(item.cell.cell_id for item in expanded)])
+        query_context_id = "ws-" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
         candidates = self._flatten(expanded, query_vector)
         routed_sources = sorted(
             {
                 source_id
                 for route in routes
-                for node in route.thread.nodes
+                for node in route.cell.nodes
                 for source_id in node.source_turn_ids
             }
         )
@@ -417,30 +417,30 @@ class TransientRoleBindingBuilder:
             {
                 source_id
                 for item in expanded
-                for node in item.thread.nodes
+                for node in item.cell.nodes
                 for source_id in node.source_turn_ids
             }
         )
-        candidate_thread_ids = list(dict.fromkeys(
-            str(item["thread_id"]) for item in candidates
+        candidate_cell_ids = list(dict.fromkeys(
+            str(item["cell_id"]) for item in candidates
         ))
         candidate_node_ids = [str(item["node_id"]) for item in candidates]
         base = dict(
-            workspace_id=workspace_id,
+            query_context_id=query_context_id,
             query=query,
             address=address,
             question_type=question_type,
             complexity=complexity,
             source_candidate_count=len(expanded),
-            routed_thread_count=len(routes),
-            expanded_thread_count=len(expanded),
+            routed_cell_count=len(routes),
+            expanded_cell_count=len(expanded),
             prompt_guard_tokens=self.prompt_guard_tokens,
             routed_source_turn_ids=routed_sources,
             expanded_source_turn_ids=expanded_sources,
             global_route_calls=1,
-            routed_thread_ids=[route.thread.thread_id for route in routes],
-            expanded_thread_ids=[item.thread.thread_id for item in expanded],
-            candidate_thread_ids=candidate_thread_ids,
+            routed_cell_ids=[route.cell.cell_id for route in routes],
+            expanded_cell_ids=[item.cell.cell_id for item in expanded],
+            candidate_cell_ids=candidate_cell_ids,
             candidate_node_ids=candidate_node_ids,
             readout_rule=(
                 "query-similarity-top-k"
@@ -451,9 +451,9 @@ class TransientRoleBindingBuilder:
             readout_budget_tokens=self.readout_token_budget,
         )
         if not candidates:
-            workspace = MemoryWorkspace(**base, sufficient=False)
-            workspace._legacy_item_guard = self._legacy_item_guard
-            return workspace
+            query_context = QueryContext(**base, sufficient=False)
+            query_context._legacy_item_guard = self._legacy_item_guard
+            return query_context
 
         if self.readout_mode == "query_similarity":
             adjacency: Dict[str, Dict[str, float]] = {}
@@ -487,12 +487,12 @@ class TransientRoleBindingBuilder:
         selected_with_scores = list(zip(selected, scores))
         role_counts: Dict[str, int] = defaultdict(int)
         evidence = [
-            WorkspaceEvidence(
+            ContextEvidence(
                 evidence_id=f"W{index}",
-                thread_id=item["thread_id"],
+                cell_id=item["cell_id"],
                 node_id=item["node_id"],
                 text=item["text"],
-                thread_head=item["thread_head"],
+                cell_head=item["cell_head"],
                 source_turn_ids=item["source_turn_ids"],
                 role=item.get("role", "context"),
                 # Preserve the old temporal rendering label as a compatibility
@@ -526,8 +526,8 @@ class TransientRoleBindingBuilder:
                 # Compatibility field: mirrors the causal role state already
                 # produced by the rollout.
                 marginal_gain=round(float(item.get("role_gain", score)), 6),
-                thread_ordinal=int(item.get("thread_ordinal", 0)),
-                thread_rank=item["thread_rank"],
+                cell_ordinal=int(item.get("cell_ordinal", 0)),
+                cell_rank=item["cell_rank"],
                 ordinal=item["ordinal"],
                 timestamp=item["timestamp"],
             )
@@ -551,7 +551,7 @@ class TransientRoleBindingBuilder:
             for item in candidates
             if float(item.get("_support_influence", 0.0)) > self.diagnostic_epsilon
         )
-        workspace = MemoryWorkspace(
+        query_context = QueryContext(
             **base,
             evidence=evidence,
             relations=relations,
@@ -567,7 +567,7 @@ class TransientRoleBindingBuilder:
                 else "transient-role-binding"
             ),
             node_candidate_count=len(candidates),
-        visible_span_count=len({item["thread_id"] for item, _ in selected_with_scores}),
+        visible_span_count=len({item["cell_id"] for item, _ in selected_with_scores}),
             assembly_coverage=round(assembly_coverage, 6),
             activation_total=round(activation_total, 6),
             activation_entropy=round(entropy, 6),
@@ -608,8 +608,8 @@ class TransientRoleBindingBuilder:
                 1 for item in candidates if float(item.get("_seed_signal", 0.0)) >= readout_threshold
             ),
         )
-        workspace._legacy_item_guard = self._legacy_item_guard
-        return workspace
+        query_context._legacy_item_guard = self._legacy_item_guard
+        return query_context
 
     @staticmethod
     def _timestamp_key(value: Any) -> Tuple[int, str]:
@@ -638,7 +638,7 @@ class TransientRoleBindingBuilder:
             pairs,
             key=lambda pair: (
                 int(pair[0].get("source_ordinal", 0)),
-                int(pair[0].get("thread_ordinal", 0)),
+                int(pair[0].get("cell_ordinal", 0)),
                 int(pair[0].get("ordinal", 0)),
                 str(pair[0].get("node_id", "")),
             ),
@@ -646,29 +646,29 @@ class TransientRoleBindingBuilder:
 
     def _flatten(
         self,
-        expanded: Sequence[ThreadCandidate],
+        expanded: Sequence[CellCandidate],
         query_vector: Sequence[float],
     ) -> List[Dict[str, Any]]:
         candidates: List[Dict[str, Any]] = []
-        for thread_rank, item in enumerate(expanded, 1):
-            thread: InteractionThread = item.thread
-            for node in thread.nodes:
+        for cell_rank, item in enumerate(expanded, 1):
+            cell: MemoryCell = item.cell
+            for node in cell.nodes:
                 dense = (self._cosine(query_vector, node.embedding) + 1.0) / 2.0
                 candidates.append(
                     {
-                        "thread_id": thread.thread_id,
+                        "cell_id": cell.cell_id,
                         "node_id": node.node_id,
                         "text": node.text,
-                        "thread_head": thread.head,
+                        "cell_head": cell.head,
                         "source_turn_ids": list(node.source_turn_ids),
                         "ordinal": int(node.ordinal),
-                        "thread_ordinal": int(thread.ordinal),
+                        "cell_ordinal": int(cell.ordinal),
                         "source_ordinal": int(node.source_ordinal or node.ordinal),
                         "timestamp": node.timestamp,
                         "dense_score": dense,
                         "route_score": max(0.0, min(1.0, item.route_score)),
                         "hop": int(item.hop),
-                        "thread_rank": thread_rank,
+                        "cell_rank": cell_rank,
                         "activation_score": 0.0,
                         "query_affinity": dense,
                         # Kept on the transient record for local message
@@ -679,8 +679,8 @@ class TransientRoleBindingBuilder:
         return candidates
 
     @staticmethod
-    def _head_vertex(thread_id: str) -> str:
-        return f"h:{thread_id}"
+    def _head_vertex(cell_id: str) -> str:
+        return f"h:{cell_id}"
 
     @staticmethod
     def _node_vertex(node_id: str) -> str:
@@ -688,28 +688,28 @@ class TransientRoleBindingBuilder:
 
     def _activation_graph(
         self,
-        expanded: Sequence[ThreadCandidate],
+        expanded: Sequence[CellCandidate],
         candidates: Sequence[Dict[str, Any]],
     ) -> Tuple[Dict[str, Dict[str, float]], Dict[str, float]]:
         adjacency: Dict[str, Dict[str, float]] = defaultdict(dict)
         seed: Dict[str, float] = {}
-        by_thread: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-        item_by_thread = {item.thread.thread_id: item for item in expanded}
-        included = set(item_by_thread)
+        by_cell: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        item_by_cell = {item.cell.cell_id: item for item in expanded}
+        included = set(item_by_cell)
 
         for candidate in candidates:
-            by_thread[candidate["thread_id"]].append(candidate)
+            by_cell[candidate["cell_id"]].append(candidate)
 
         def connect(left: str, right: str, weight: float) -> None:
             weight = max(1e-9, float(weight))
             adjacency[left][right] = max(weight, adjacency[left].get(right, 0.0))
             adjacency[right][left] = max(weight, adjacency[right].get(left, 0.0))
 
-        for thread_id, nodes in by_thread.items():
+        for cell_id, nodes in by_cell.items():
             nodes.sort(key=lambda item: (item["ordinal"], item["node_id"]))
-            head_vertex = self._head_vertex(thread_id)
+            head_vertex = self._head_vertex(cell_id)
             adjacency.setdefault(head_vertex, {})
-            route_score = item_by_thread[thread_id].route_score
+            route_score = item_by_cell[cell_id].route_score
             seed[head_vertex] = self.head_seed_weight * max(1e-6, route_score)
             for node in nodes:
                 node_vertex = self._node_vertex(node["node_id"])
@@ -734,12 +734,12 @@ class TransientRoleBindingBuilder:
                 )
 
         for item in expanded:
-            left = self._head_vertex(item.thread.thread_id)
-            for link in item.thread.links:
-                if link.target_thread_id in included:
+            left = self._head_vertex(item.cell.cell_id)
+            for link in item.cell.links:
+                if link.target_cell_id in included:
                     connect(
                         left,
-                        self._head_vertex(link.target_thread_id),
+                        self._head_vertex(link.target_cell_id),
                         max(0.05, link.weight),
                     )
         return dict(adjacency), self._normalise(seed)
@@ -846,8 +846,8 @@ class TransientRoleBindingBuilder:
         ) -> Dict[str, float]:
             """Return direct, intra-span, and cross-span transient channels."""
             current = candidate_by_vertex.get(vertex)
-            current_thread = (
-                str(current.get("thread_id", ""))
+            current_cell = (
+                str(current.get("cell_id", ""))
                 if current is not None
                 else vertex[2:]
                 if vertex.startswith("h:")
@@ -865,14 +865,14 @@ class TransientRoleBindingBuilder:
                     continue
                 contribution = compatibility * self._clamp(snapshot.get(neighbor, 0.0))
                 neighbor_item = candidate_by_vertex.get(neighbor)
-                neighbor_thread = (
-                    str(neighbor_item.get("thread_id", ""))
+                neighbor_cell = (
+                    str(neighbor_item.get("cell_id", ""))
                     if neighbor_item is not None
                     else neighbor[2:]
                     if neighbor.startswith("h:")
                     else ""
                 )
-                if current_thread and neighbor_thread == current_thread:
+                if current_cell and neighbor_cell == current_cell:
                     local += contribution
                 else:
                     relay += contribution
@@ -951,7 +951,7 @@ class TransientRoleBindingBuilder:
                 break
 
         # Save local diagnostics on the transient candidate dictionaries. They
-        # are consumed by readout and never reach ThreadStore.
+        # are consumed by readout and never reach CellGraphStore.
         positive_edges = 0
         total_edges = 0
         for vertex, item in candidate_by_vertex.items():
@@ -978,7 +978,7 @@ class TransientRoleBindingBuilder:
                     neighbor_item = candidate_by_vertex.get(neighbor)
                     if neighbor.startswith("h:"):
                         bridge_support += 0.75 * contribution
-                    elif neighbor_item and neighbor_item["thread_id"] == item["thread_id"]:
+                    elif neighbor_item and neighbor_item["cell_id"] == item["cell_id"]:
                         context_support += contribution
                     else:
                         bridge_support += contribution
@@ -1158,7 +1158,7 @@ class TransientRoleBindingBuilder:
                 int(math.ceil(
                     (len(str(item.get("text", "")))
                      + 2 * len(item["_readout_sources"])
-                     + len(str(item.get("thread_id", "")))
+                     + len(str(item.get("cell_id", "")))
                      + 12) / 3.2
                 )),
             )
@@ -1168,7 +1168,7 @@ class TransientRoleBindingBuilder:
             key=lambda item: (
                 -float(item.get("_readout_score", 0.0)),
                 -float(item.get("relay_mediation", item.get("_relay_mediation", 0.0))),
-                int(item.get("thread_rank", 0)),
+                int(item.get("cell_rank", 0)),
                 int(item.get("ordinal", 0)),
                 str(item.get("node_id", "")),
             ),
@@ -1184,7 +1184,7 @@ class TransientRoleBindingBuilder:
         selected: List[Dict[str, Any]] = []
         selected_ids: set[str] = set()
         covered_sources: set[str] = set()
-        covered_threads: set[str] = set()
+        covered_cells: set[str] = set()
         covered_roles: set[str] = set()
         used_tokens = 0
 
@@ -1202,19 +1202,19 @@ class TransientRoleBindingBuilder:
             new_sources = len(
                 set(item.get("_readout_sources") or ()) - covered_sources
             )
-            new_thread = str(item.get("thread_id", "")) not in covered_threads
+            new_cell = str(item.get("cell_id", "")) not in covered_cells
             role = str(item.get("_readout_role", "context"))
             new_role = role not in covered_roles
             relay = self._clamp(item.get("relay_mediation", item.get("_relay_mediation", 0.0)))
             local = self._clamp(item.get("local_support", item.get("_local_support", 0.0)))
             source_gain = min(1.0, new_sources / max(1, len(item.get("_readout_sources") or ())))
             structural_gain = 0.55 * relay + 0.45 * local
-            # Diminishing returns on already represented threads/roles makes
+            # Diminishing returns on already represented cells/roles makes
             # the rule prefer complementary evidence without forcing a quota.
             coverage_gain = (
                 0.74 * score
                 + 0.13 * source_gain
-                + 0.04 * float(new_thread)
+                + 0.04 * float(new_cell)
                 + 0.03 * float(new_role)
                 + 0.06 * structural_gain
             )
@@ -1243,7 +1243,7 @@ class TransientRoleBindingBuilder:
                     feasible,
                     key=lambda item: (
                         -float(item.get("_readout_score", 0.0)),
-                        int(item.get("thread_rank", 0)),
+                        int(item.get("cell_rank", 0)),
                         int(item.get("ordinal", 0)),
                         str(item.get("node_id", "")),
                     ),
@@ -1257,7 +1257,7 @@ class TransientRoleBindingBuilder:
                     key=lambda item: (
                         marginal_utility(item),
                         float(item.get("_readout_score", 0.0)),
-                        -int(item.get("thread_rank", 0)),
+                        -int(item.get("cell_rank", 0)),
                         -int(item.get("ordinal", 0)),
                         str(item.get("node_id", "")),
                     ),
@@ -1266,7 +1266,7 @@ class TransientRoleBindingBuilder:
             selected.append(best)
             selected_ids.add(str(best.get("node_id", "")))
             covered_sources.update(best.get("_readout_sources") or ())
-            covered_threads.add(str(best.get("thread_id", "")))
+            covered_cells.add(str(best.get("cell_id", "")))
             covered_roles.add(str(best.get("_readout_role", "context")))
             used_tokens += int(best.get("_readout_cost", 0))
             ordered_candidates = [item for item in ordered_candidates if item is not best]
@@ -1276,7 +1276,7 @@ class TransientRoleBindingBuilder:
                 candidates,
                 key=lambda item: (
                     -float(item.get("_readout_score", 0.0)),
-                    int(item.get("thread_rank", 0)),
+                    int(item.get("cell_rank", 0)),
                     int(item.get("ordinal", 0)),
                 ),
             ) if str(item.get("node_id", "")) not in selected_ids]
@@ -1311,7 +1311,7 @@ class TransientRoleBindingBuilder:
     def _local_affinity_matrix(
         self,
         candidates: Sequence[Dict[str, Any]],
-        expanded: Sequence[ThreadCandidate],
+        expanded: Sequence[CellCandidate],
         question_type: str = "general",
     ) -> List[List[float]]:
         """Expose fixed-substrate affinities for diagnostics and tests.
@@ -1327,8 +1327,8 @@ class TransientRoleBindingBuilder:
 
         link_weight: Dict[Tuple[str, str], float] = {}
         for item in expanded:
-            for link in item.thread.links:
-                key = (item.thread.thread_id, link.target_thread_id)
+            for link in item.cell.links:
+                key = (item.cell.cell_id, link.target_cell_id)
                 link_weight[key] = max(link_weight.get(key, 0.0), float(link.weight))
 
         temporal = "temporal" in str(question_type).lower()
@@ -1352,13 +1352,13 @@ class TransientRoleBindingBuilder:
                 # Chronology links remain observable even when two source
                 # cells have orthogonal embeddings.
                 gate = 0.25 + 0.75 * observable
-                if left_item["thread_id"] == right_item["thread_id"]:
+                if left_item["cell_id"] == right_item["cell_id"]:
                     gap = abs(int(left_item.get("ordinal", 0)) - int(right_item.get("ordinal", 0)))
                     weight = (0.35 ** max(1, gap)) * gate
                 else:
                     link = max(
-                        link_weight.get((left_item["thread_id"], right_item["thread_id"]), 0.0),
-                        link_weight.get((right_item["thread_id"], left_item["thread_id"]), 0.0),
+                        link_weight.get((left_item["cell_id"], right_item["cell_id"]), 0.0),
+                        link_weight.get((right_item["cell_id"], left_item["cell_id"]), 0.0),
                     )
                     weight = 0.45 * gate * link
                 if weight > 0.0:
@@ -1371,34 +1371,34 @@ class TransientRoleBindingBuilder:
     def _kernel(
         self,
         candidates: Sequence[Dict[str, Any]],
-        expanded: Sequence[ThreadCandidate],
+        expanded: Sequence[CellCandidate],
         question_type: str = "general",
     ) -> List[List[float]]:
         return self._local_affinity_matrix(candidates, expanded, question_type)
 
     def _relations(
         self,
-        evidence: Sequence[WorkspaceEvidence],
-        expanded: Sequence[ThreadCandidate],
-    ) -> List[WorkspaceRelation]:
-        relations: List[WorkspaceRelation] = []
-        by_thread_link = {
-            (item.thread.thread_id, link.target_thread_id): link.relation
+        evidence: Sequence[ContextEvidence],
+        expanded: Sequence[CellCandidate],
+    ) -> List[ContextRelation]:
+        relations: List[ContextRelation] = []
+        by_cell_link = {
+            (item.cell.cell_id, link.target_cell_id): link.relation
             for item in expanded
-            for link in item.thread.links
+            for link in item.cell.links
         }
         for left_index, left in enumerate(evidence):
             for right in evidence[left_index + 1 :]:
                 relation_type: Optional[str] = None
-                if left.thread_id == right.thread_id and abs(left.ordinal - right.ordinal) == 1:
-                    relation_type = "thread-continuation"
-                elif (left.thread_id, right.thread_id) in by_thread_link:
-                    relation_type = by_thread_link[(left.thread_id, right.thread_id)]
-                elif (right.thread_id, left.thread_id) in by_thread_link:
-                    relation_type = by_thread_link[(right.thread_id, left.thread_id)]
+                if left.cell_id == right.cell_id and abs(left.ordinal - right.ordinal) == 1:
+                    relation_type = "cell-continuation"
+                elif (left.cell_id, right.cell_id) in by_cell_link:
+                    relation_type = by_cell_link[(left.cell_id, right.cell_id)]
+                elif (right.cell_id, left.cell_id) in by_cell_link:
+                    relation_type = by_cell_link[(right.cell_id, left.cell_id)]
                 if relation_type:
                     relations.append(
-                        WorkspaceRelation(
+                        ContextRelation(
                             source_evidence_id=left.evidence_id,
                             target_evidence_id=right.evidence_id,
                             relation_type=relation_type,
@@ -1409,12 +1409,12 @@ class TransientRoleBindingBuilder:
         return relations
 
 
-def build_transient_assembly(
+def build_query_context(
     query: str,
     address: str,
     query_vector: Sequence[float],
     routes: Sequence[Any],
-    expanded: Sequence[ThreadCandidate],
+    expanded: Sequence[CellCandidate],
     plan: Optional[Dict[str, Any]] = None,
     *,
     item_guard: Optional[int] = None,
@@ -1434,14 +1434,14 @@ def build_transient_assembly(
     compatibility_scale: float = 1.35,
     inhibition_scale: float = 0.35,
     **legacy_options: Any,
-) -> MemoryWorkspace:
+) -> QueryContext:
     if item_guard is None:
         item_guard = readout_limit
     if item_guard is None and "max_evidence" in legacy_options:
         item_guard = legacy_options["max_evidence"]
     if "min_evidence" in legacy_options:
         min_readout = legacy_options["min_evidence"]
-    return TransientAssemblyBuilder(
+    return QueryContextBuilder(
         item_guard=item_guard,
         min_readout=min_readout,
         max_relations=max_relations,
@@ -1461,17 +1461,17 @@ def build_transient_assembly(
     ).build(query, address, query_vector, routes, expanded, plan)
 
 
-def build_thread_workspace(
+def build_cell_query_context(
     query: str,
     address: str,
     query_vector: Sequence[float],
     routes: Sequence[Any],
-    expanded: Sequence[ThreadCandidate],
+    expanded: Sequence[CellCandidate],
     plan: Optional[Dict[str, Any]] = None,
     **options: Any,
-) -> MemoryWorkspace:
+) -> QueryContext:
     """Compatibility entry point for existing benchmark scripts."""
-    return build_transient_assembly(
+    return build_query_context(
         query,
         address,
         query_vector,
@@ -1481,23 +1481,3 @@ def build_thread_workspace(
         **options,
     )
 
-
-# Canonical entry point for new experiments.
-build_transient_role_state = build_transient_assembly
-
-
-# Compatibility aliases.  New code should use the descriptive names above.
-AssemblyCell = WorkspaceEvidence
-AssemblyRelation = WorkspaceRelation
-TransientAssembly = MemoryWorkspace
-TransientAssemblyState = MemoryWorkspace
-AssemblyInference = TransientRoleBindingBuilder
-ThreadWorkspaceBuilder = TransientRoleBindingBuilder
-TransientAssemblyBuilder = TransientRoleBindingBuilder
-TransientAssemblyEngine = TransientRoleBindingBuilder
-
-# Canonical conceptual names for the current method.  The implementation is
-# intentionally shared with the historical aliases so benchmark entry points
-# cannot silently exercise a different algorithm.
-TransientRoleBindingState = MemoryWorkspace
-TransientRoleBindingCell = WorkspaceEvidence

@@ -3,7 +3,7 @@ from typing import List, Optional
 from memrewire.core.models.memory_entry import Dialogue, MemoryEntry
 from memrewire.core.utils.llm_client import LLMClient
 from memrewire.core.utils.embedding import EmbeddingModel
-from memrewire.core.thread_store import ThreadStore
+from memrewire.core.cell_graph_store import CellGraphStore
 from memrewire.core.memory_builder import MemoryBuilder
 from memrewire.core.hybrid_retriever import MemRewireRetriever
 from memrewire.core.answer_generator import AnswerGenerator
@@ -66,7 +66,7 @@ class MemRewireSystem:
             use_streaming=use_streaming
         )
         self.embedding_model = EmbeddingModel()
-        self.vector_store = ThreadStore(
+        self.vector_store = CellGraphStore(
             db_path=db_path,
             embedding_model=self.embedding_model,
             table_name=table_name,
@@ -151,8 +151,8 @@ class MemRewireSystem:
         print("=" * 60)
 
         # Stage 3: query-conditioned transient assembly
-        if getattr(config, "ENABLE_MEMORY_WORKSPACE", True):
-            contexts = self.assembly_retriever.retrieve_workspace(question)
+        if getattr(config, "ENABLE_QUERY_CONTEXT", True):
+            contexts = self.assembly_retriever.retrieve_query_context(question)
         else:
             contexts = self.assembly_retriever.retrieve(question)
 
@@ -186,8 +186,8 @@ class MemRewireSystem:
             print(f"Restatement: {memory.lossless_restatement}")
             if memory.timestamp:
                 print(f"Time: {memory.timestamp}")
-            if memory.thread_id:
-                print(f"Thread: {memory.thread_id}")
+            if memory.cell_id:
+                print(f"Cell: {memory.cell_id}")
             if memory.source_turn_ids:
                 print(f"Source turns: {', '.join(memory.source_turn_ids)}")
 
@@ -241,8 +241,8 @@ if __name__ == "__main__":
     
     print("\nTesting an unsupported question...")
     question = "What is Alice's favorite food?"
-    if getattr(config, "ENABLE_MEMORY_WORKSPACE", True):
-        contexts = system.assembly_retriever.retrieve_workspace(question)
+    if getattr(config, "ENABLE_QUERY_CONTEXT", True):
+        contexts = system.assembly_retriever.retrieve_query_context(question)
     else:
         contexts = system.assembly_retriever.retrieve(question)
     answer = system.answer_generator.generate_answer(question, contexts)
@@ -250,11 +250,3 @@ if __name__ == "__main__":
     print(f"Answer: {answer}")
     
     print("\nQuick test completed.")
-
-
-# Existing evaluators import these names. They are API aliases, not method
-# identifiers used in the paper.
-TransientRoleBindingSystem = MemRewireSystem
-TransientAssemblySystem = MemRewireSystem
-ThreadWorkspaceSystem = MemRewireSystem
-SimpleMemSystem = MemRewireSystem

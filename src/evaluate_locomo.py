@@ -911,14 +911,14 @@ Return ONLY the JSON, no other text.
             # For category 5 (adversarial), disable reflection since "no answer means no answer"
             retrieval_start = time.time()
             import config
-            use_workspace = getattr(config, "ENABLE_MEMORY_WORKSPACE", True)
-            if use_workspace:
+            use_query_context = getattr(config, "ENABLE_QUERY_CONTEXT", True)
+            if use_query_context:
                 if category == 5:
-                    contexts = self.system.hybrid_retriever.retrieve_workspace(
+                    contexts = self.system.hybrid_retriever.retrieve_query_context(
                         question, enable_reflection=False
                     )
                 else:
-                    contexts = self.system.hybrid_retriever.retrieve_workspace(question)
+                    contexts = self.system.hybrid_retriever.retrieve_query_context(question)
             elif category == 5:
                 contexts = self.system.hybrid_retriever.retrieve(
                     question, enable_reflection=False
@@ -935,7 +935,7 @@ Return ONLY the JSON, no other text.
                 if self.context_tokenizer is not None
                 else None
             )
-            workspace_stats = {}
+            query_context_stats = {}
             if hasattr(contexts, "source_candidate_count"):
                 selected_sources = {
                     source_id
@@ -952,37 +952,37 @@ Return ONLY the JSON, no other text.
                     len(source_intersection) / len(gold_sources)
                     if gold_sources else None
                 )
-                workspace_stats = {
-                    "workspace_span_candidate_count": contexts.source_candidate_count,
-                    "workspace_cell_count": len(contexts.assembly_cells),
-                    "workspace_sufficient": contexts.sufficient,
-                    "workspace_routed_span_count": getattr(contexts, "routed_thread_count", None),
-                    "workspace_expanded_span_count": getattr(contexts, "expanded_thread_count", None),
-                    "workspace_candidate_cell_count": getattr(contexts, "node_candidate_count", None),
-                    "workspace_visible_span_count": getattr(contexts, "selected_thread_count", None),
-                    "workspace_visibility_coverage": getattr(contexts, "assembly_coverage", None),
-                    "workspace_visible_cell_count": len(contexts.assembly_cells),
-                    "workspace_assembly_mode": getattr(contexts, "assembly_mode", None),
-                    "workspace_activation_total": getattr(contexts, "activation_total", None),
-                    "workspace_activation_entropy": getattr(contexts, "activation_entropy", None),
-                    "workspace_rollout_steps": getattr(contexts, "rollout_steps", None),
-                    "workspace_activation_energy": getattr(contexts, "activation_energy", None),
-                    "workspace_message_edge_visits": getattr(contexts, "message_edge_visits", None),
-                    "workspace_graph_vertex_count": getattr(contexts, "graph_vertex_count", None),
-                    "workspace_graph_edge_count": getattr(contexts, "graph_edge_count", None),
-                    "workspace_local_edge_visits": getattr(contexts, "local_edge_visits", None),
-                    "workspace_global_route_calls": getattr(contexts, "global_route_calls", None),
-                    "workspace_address_planner_calls": getattr(contexts, "address_planner_calls", None),
-                    "workspace_indexed_thread_count": getattr(contexts, "indexed_thread_count", None),
-                    "workspace_role_binding_mode": getattr(contexts, "role_binding_mode", None),
-                    "workspace_role_counts": dict(getattr(contexts, "role_counts", {}) or {}),
-                    "workspace_visibility_cutoff": getattr(contexts, "visibility_cutoff", None),
-                    "workspace_prompt_guard_tokens": getattr(contexts, "prompt_guard_tokens", None),
-                    "workspace_readout_capacity_cells": getattr(contexts, "readout_capacity_cells", None),
-                    "workspace_readout_budget_tokens": getattr(contexts, "readout_budget_tokens", None),
-                    "workspace_readout_utility": getattr(contexts, "readout_utility", None),
-                    "workspace_readout_rule": getattr(contexts, "readout_rule", None),
-                    "workspace_serialized_cell_count": getattr(contexts, "serialized_cell_count", None),
+                query_context_stats = {
+                    "query_context_span_candidate_count": contexts.source_candidate_count,
+                    "query_context_cell_count": len(contexts.assembly_cells),
+                    "query_context_sufficient": contexts.sufficient,
+                    "query_context_routed_span_count": getattr(contexts, "routed_cell_count", None),
+                    "query_context_expanded_span_count": getattr(contexts, "expanded_cell_count", None),
+                    "query_context_candidate_cell_count": getattr(contexts, "node_candidate_count", None),
+                    "query_context_visible_span_count": getattr(contexts, "selected_cell_count", None),
+                    "query_context_visibility_coverage": getattr(contexts, "assembly_coverage", None),
+                    "query_context_visible_cell_count": len(contexts.assembly_cells),
+                    "query_context_assembly_mode": getattr(contexts, "assembly_mode", None),
+                    "query_context_activation_total": getattr(contexts, "activation_total", None),
+                    "query_context_activation_entropy": getattr(contexts, "activation_entropy", None),
+                    "query_context_rollout_steps": getattr(contexts, "rollout_steps", None),
+                    "query_context_activation_energy": getattr(contexts, "activation_energy", None),
+                    "query_context_message_edge_visits": getattr(contexts, "message_edge_visits", None),
+                    "query_context_graph_vertex_count": getattr(contexts, "graph_vertex_count", None),
+                    "query_context_graph_edge_count": getattr(contexts, "graph_edge_count", None),
+                    "query_context_local_edge_visits": getattr(contexts, "local_edge_visits", None),
+                    "query_context_global_route_calls": getattr(contexts, "global_route_calls", None),
+                    "query_context_address_planner_calls": getattr(contexts, "address_planner_calls", None),
+                    "query_context_indexed_cell_count": getattr(contexts, "indexed_cell_count", None),
+                    "query_context_role_binding_mode": getattr(contexts, "role_binding_mode", None),
+                    "query_context_role_counts": dict(getattr(contexts, "role_counts", {}) or {}),
+                    "query_context_visibility_cutoff": getattr(contexts, "visibility_cutoff", None),
+                    "query_context_prompt_guard_tokens": getattr(contexts, "prompt_guard_tokens", None),
+                    "query_context_readout_capacity_cells": getattr(contexts, "readout_capacity_cells", None),
+                    "query_context_readout_budget_tokens": getattr(contexts, "readout_budget_tokens", None),
+                    "query_context_readout_utility": getattr(contexts, "readout_utility", None),
+                    "query_context_readout_rule": getattr(contexts, "readout_rule", None),
+                    "query_context_serialized_cell_count": getattr(contexts, "serialized_cell_count", None),
                     "gold_source_count": len(gold_sources),
                     "gold_source_recall": source_recall,
                     "gold_source_any": bool(source_intersection) if gold_sources else None,
@@ -1039,14 +1039,14 @@ Return ONLY the JSON, no other text.
 
         # Print results
         print(f"  Retrieved: {len(contexts)} memory entries")
-        if workspace_stats:
+        if query_context_stats:
             print(
-                f"  Assembly: {workspace_stats['workspace_cell_count']} visible cells / "
-                f"{workspace_stats['workspace_candidate_cell_count']} candidate cells; "
-                f"activation={workspace_stats['workspace_activation_total']:.3f}"
+                f"  Assembly: {query_context_stats['query_context_cell_count']} visible cells / "
+                f"{query_context_stats['query_context_candidate_cell_count']} candidate cells; "
+                f"activation={query_context_stats['query_context_activation_total']:.3f}"
             )
-            if workspace_stats.get("gold_source_recall") is not None:
-                print(f"  Gold source-turn recall: {workspace_stats['gold_source_recall']:.3f}")
+            if query_context_stats.get("gold_source_recall") is not None:
+                print(f"  Gold source-turn recall: {query_context_stats['gold_source_recall']:.3f}")
         if context_token_count is not None:
             print(f"  Retrieved context tokens: {context_token_count}")
         print(f"  Retrieval time: {retrieval_time:.3f}s")
@@ -1078,58 +1078,58 @@ Return ONLY the JSON, no other text.
             'total_time': total_time,
             'num_retrieved': len(contexts),
             'retrieved_context_tokens': context_token_count,
-            **workspace_stats,
+            **query_context_stats,
             'metrics': metrics
         }
 
     @staticmethod
-    def _summarize_workspace_results(workspace_results: List[Dict]) -> Dict:
+    def _summarize_query_context_results(query_context_results: List[Dict]) -> Dict:
         """Aggregate routing, expansion, activation, and final evidence diagnostics."""
-        if not workspace_results:
+        if not query_context_results:
             return {"questions": 0}
 
         def mean(field: str):
-            values = [row[field] for row in workspace_results if row.get(field) is not None]
+            values = [row[field] for row in query_context_results if row.get(field) is not None]
             return sum(values) / len(values) if values else None
 
         def rate(field: str):
-            values = [row[field] for row in workspace_results if row.get(field) is not None]
+            values = [row[field] for row in query_context_results if row.get(field) is not None]
             return sum(bool(value) for value in values) / len(values) if values else None
 
         summary = {
-            "questions": len(workspace_results),
-            "average_indexed_spans": mean("workspace_indexed_thread_count"),
-            "average_routed_spans": mean("workspace_routed_span_count"),
-            "average_expanded_spans": mean("workspace_expanded_span_count"),
-            "average_candidate_cells": mean("workspace_candidate_cell_count"),
-            "average_visible_cells": mean("workspace_cell_count"),
-            "average_serialized_cells": mean("workspace_serialized_cell_count"),
-            "average_readout_utility": mean("workspace_readout_utility"),
-            "average_visible_spans": mean("workspace_visible_span_count"),
-            "average_visibility_coverage": mean("workspace_visibility_coverage"),
-            "average_activation_total": mean("workspace_activation_total"),
-            "average_activation_entropy": mean("workspace_activation_entropy"),
-            "average_rollout_steps": mean("workspace_rollout_steps"),
-            "average_activation_energy": mean("workspace_activation_energy"),
-            "average_message_edge_visits": mean("workspace_message_edge_visits"),
-            "average_graph_edges": mean("workspace_graph_edge_count"),
-            "average_local_edge_visits": mean("workspace_local_edge_visits"),
-            "average_global_route_calls": mean("workspace_global_route_calls"),
-            "average_address_planner_calls": mean("workspace_address_planner_calls"),
-            "activation_sufficient_rate": rate("workspace_sufficient"),
+            "questions": len(query_context_results),
+            "average_indexed_spans": mean("query_context_indexed_cell_count"),
+            "average_routed_spans": mean("query_context_routed_span_count"),
+            "average_expanded_spans": mean("query_context_expanded_span_count"),
+            "average_candidate_cells": mean("query_context_candidate_cell_count"),
+            "average_visible_cells": mean("query_context_cell_count"),
+            "average_serialized_cells": mean("query_context_serialized_cell_count"),
+            "average_readout_utility": mean("query_context_readout_utility"),
+            "average_visible_spans": mean("query_context_visible_span_count"),
+            "average_visibility_coverage": mean("query_context_visibility_coverage"),
+            "average_activation_total": mean("query_context_activation_total"),
+            "average_activation_entropy": mean("query_context_activation_entropy"),
+            "average_rollout_steps": mean("query_context_rollout_steps"),
+            "average_activation_energy": mean("query_context_activation_energy"),
+            "average_message_edge_visits": mean("query_context_message_edge_visits"),
+            "average_graph_edges": mean("query_context_graph_edge_count"),
+            "average_local_edge_visits": mean("query_context_local_edge_visits"),
+            "average_global_route_calls": mean("query_context_global_route_calls"),
+            "average_address_planner_calls": mean("query_context_address_planner_calls"),
+            "activation_sufficient_rate": rate("query_context_sufficient"),
             "routed_gold_source_recall": mean("routed_gold_source_recall"),
             "routed_gold_source_any_rate": rate("routed_gold_source_any"),
             "routed_gold_source_all_rate": rate("routed_gold_source_all"),
             "expanded_gold_source_recall": mean("expanded_gold_source_recall"),
             "expanded_gold_source_any_rate": rate("expanded_gold_source_any"),
             "expanded_gold_source_all_rate": rate("expanded_gold_source_all"),
-            "workspace_gold_source_recall": mean("gold_source_recall"),
-            "workspace_gold_source_any_rate": rate("gold_source_any"),
-            "workspace_gold_source_all_rate": rate("gold_source_all"),
+            "query_context_gold_source_recall": mean("gold_source_recall"),
+            "query_context_gold_source_any_rate": rate("gold_source_any"),
+            "query_context_gold_source_all_rate": rate("gold_source_all"),
         }
         role_totals: Dict[str, int] = defaultdict(int)
-        for row in workspace_results:
-            for role, count in (row.get("workspace_role_counts") or {}).items():
+        for row in query_context_results:
+            for role, count in (row.get("query_context_role_counts") or {}).items():
                 role_totals[str(role)] += int(count or 0)
         total_role_bindings = sum(role_totals.values())
         summary["role_binding_counts"] = dict(role_totals)
@@ -1138,8 +1138,8 @@ Return ONLY the JSON, no other text.
             for role, count in role_totals.items()
         } if total_role_bindings else {}
         summary["by_category"] = {}
-        for category in sorted({row.get("category") for row in workspace_results}):
-            rows = [row for row in workspace_results if row.get("category") == category]
+        for category in sorted({row.get("category") for row in query_context_results}):
+            rows = [row for row in query_context_results if row.get("category") == category]
 
             def category_mean(field: str):
                 values = [row[field] for row in rows if row.get(field) is not None]
@@ -1149,9 +1149,9 @@ Return ONLY the JSON, no other text.
                 "questions": len(rows),
                 "routed_gold_source_recall": category_mean("routed_gold_source_recall"),
                 "expanded_gold_source_recall": category_mean("expanded_gold_source_recall"),
-                "workspace_gold_source_recall": category_mean("gold_source_recall"),
-                "average_visible_cells": category_mean("workspace_cell_count"),
-                "average_candidate_cells": category_mean("workspace_candidate_cell_count"),
+                "query_context_gold_source_recall": category_mean("gold_source_recall"),
+                "average_visible_cells": category_mean("query_context_cell_count"),
+                "average_candidate_cells": category_mean("query_context_candidate_cell_count"),
             }
         return summary
 
@@ -1175,11 +1175,11 @@ Return ONLY the JSON, no other text.
             for result in all_results
             if result.get("retrieved_context_tokens") is not None
         ]
-        workspace_results = [
+        query_context_results = [
             result for result in all_results
-            if result.get("workspace_cell_count") is not None
+            if result.get("query_context_cell_count") is not None
         ]
-        workspace_summary = self._summarize_workspace_results(workspace_results)
+        query_context_summary = self._summarize_query_context_results(query_context_results)
         progress = {
             "timestamp": time.time(),
             "sample_idx": global_sample_idx,
@@ -1198,7 +1198,7 @@ Return ONLY the JSON, no other text.
                 if context_token_counts
                 else None
             ),
-            "workspace": workspace_summary,
+            "query_context": query_context_summary,
         }
 
         progress_path = getattr(config, "ROOT_PROGRESS_PATH", None)
@@ -1352,11 +1352,11 @@ Return ONLY the JSON, no other text.
             for result in all_results
             if result.get("retrieved_context_tokens") is not None
         ]
-        workspace_results = [
+        query_context_results = [
             result for result in all_results
-            if result.get("workspace_cell_count") is not None
+            if result.get("query_context_cell_count") is not None
         ]
-        workspace_summary = self._summarize_workspace_results(workspace_results)
+        query_context_summary = self._summarize_query_context_results(query_context_results)
         token_usage["paper_like_retrieved_context"] = {
             "definition": "final retrieved context tokens, excluding QA instructions and completion",
             "tokenizer": str(getattr(config, "TOKENIZER_MODEL_PATH", None)),
@@ -1376,14 +1376,14 @@ Return ONLY the JSON, no other text.
         print(f"  Candidate online total: {token_usage['candidate_online_token_cost']['total_tokens']}")
         print(f"  Candidate online average/question: {token_usage['candidate_online_average_total_tokens_per_question']}")
         print(f"  Maintenance total: {token_usage['maintenance']['total_tokens']}")
-        if workspace_results:
+        if query_context_results:
             print(
-                "Workspace statistics: "
-                f"avg visible cells={workspace_summary['average_visible_cells']:.2f}, "
-                f"route recall={workspace_summary['routed_gold_source_recall']:.3f}, "
-                f"expanded recall={workspace_summary['expanded_gold_source_recall']:.3f}, "
-                f"workspace recall={workspace_summary['workspace_gold_source_recall']:.3f}, "
-                f"visibility coverage={workspace_summary['average_visibility_coverage']:.3f}"
+                "QueryContext statistics: "
+                f"avg visible cells={query_context_summary['average_visible_cells']:.2f}, "
+                f"route recall={query_context_summary['routed_gold_source_recall']:.3f}, "
+                f"expanded recall={query_context_summary['expanded_gold_source_recall']:.3f}, "
+                f"query_context recall={query_context_summary['query_context_gold_source_recall']:.3f}, "
+                f"visibility coverage={query_context_summary['average_visibility_coverage']:.3f}"
             )
 
         # Keep a standalone summary next to the raw JSONL log for later re-analysis.
@@ -1438,7 +1438,7 @@ Return ONLY the JSON, no other text.
                         'avg_answer_time': sum(self.answer_times)/len(self.answer_times),
                         'avg_total_time': sum(self.total_times)/len(self.total_times),
                         'token_usage': token_usage,
-                        'workspace': workspace_summary,
+                        'query_context': query_context_summary,
                     },
                     'aggregated_metrics': aggregated if self.metrics_list else {},
                     'detailed_results': all_results

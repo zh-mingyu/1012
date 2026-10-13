@@ -213,7 +213,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--token-summary", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--model", default="Qwen3-8B")
-    parser.add_argument("--method", default="TransientAssembly")
+    parser.add_argument("--method", default="MemRewire")
     parser.add_argument("--elapsed", default="")
     return parser.parse_args()
 

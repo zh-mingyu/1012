@@ -115,7 +115,7 @@ def append_jsonl(handle, data: Dict[str, Any]) -> None:
 
 
 def graph_snapshot(
-    threads: Iterable[Any],
+    cells: Iterable[Any],
     graph_name: str,
     sample_idx: int,
     run_id: str,
@@ -123,25 +123,25 @@ def graph_snapshot(
 ) -> Dict[str, Any]:
     vertex_rows = []
     edge_rows = []
-    for thread in sorted(threads, key=lambda item: item.thread_id):
+    for cell in sorted(cells, key=lambda item: item.cell_id):
         vertex_rows.append(
             {
-                "cell_id": thread.thread_id,
+                "cell_id": cell.cell_id,
                 "source_turn_ids": sorted(
                     {
                         str(source_id)
-                        for node in thread.nodes
+                        for node in cell.nodes
                         for source_id in node.source_turn_ids
                     }
                 ),
             }
         )
-        for link in thread.links:
-            if thread.thread_id < link.target_thread_id:
+        for link in cell.links:
+            if cell.cell_id < link.target_cell_id:
                 edge_rows.append(
                     {
-                        "source_cell_id": thread.thread_id,
-                        "target_cell_id": link.target_thread_id,
+                        "source_cell_id": cell.cell_id,
+                        "target_cell_id": link.target_cell_id,
                         "relation": link.relation,
                         "weight": float(link.weight),
                     }
@@ -178,16 +178,16 @@ def main() -> None:
     if args.num_samples is not None and args.num_samples < 1:
         parser.error("--num-samples must be positive")
     graph_mode = GRAPH_MODES[args.graph_name]
-    config.THREAD_GRAPH_MODE = graph_mode
-    config.THREAD_GRAPH_RANDOM_SEED = args.random_seed
-    config.THREAD_GRAPH_RANDOM_SWAPS_PER_EDGE = 10
-    config.ENABLE_THREAD_SEGMENTATION = False
+    config.CELL_GRAPH_MODE = graph_mode
+    config.CELL_GRAPH_RANDOM_SEED = args.random_seed
+    config.CELL_GRAPH_RANDOM_SWAPS_PER_EDGE = 10
+    config.ENABLE_CELL_SEGMENTATION = False
     config.ENABLE_PARALLEL_PROCESSING = False
     config.RECEPTIVE_FIELD_HOPS = args.max_hops
-    config.WORKSPACE_MAX_READOUT_CELLS = args.readout_k
+    config.CONTEXT_MAX_READOUT_CELLS = args.readout_k
     config.SOURCE_READOUT_K = args.readout_k
-    config.WORKSPACE_READOUT_MODE = "query_similarity"
-    config.THREAD_LANCEDB_PATH = str(args.output_dir / "thread_lancedb_data")
+    config.CONTEXT_READOUT_MODE = "query_similarity"
+    config.CELL_LANCEDB_PATH = str(args.output_dir / "cell_lancedb_data")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     trace_path = args.output_dir / "retrieval_trace.jsonl"
@@ -201,7 +201,7 @@ def main() -> None:
             graph_path,
             manifest_path,
             completion_path,
-            args.output_dir / "thread_lancedb_data",
+            args.output_dir / "cell_lancedb_data",
         )
     ):
         parser.error("output directory already contains data; choose a new run ID")
@@ -302,22 +302,22 @@ def main() -> None:
         # Keep the experiment condition explicit even when this runner is
         # used with an older installed MemRewireSystem signature. The graph
         # builder must see the same mode as the run manifest.
-        config.THREAD_GRAPH_MODE = graph_mode
+        config.CELL_GRAPH_MODE = graph_mode
         if hasattr(system.vector_store, "graph_mode"):
             system.vector_store.graph_mode = graph_mode
         logger.info(
             "RUNTIME_GRAPH_MODE requested=%s config=%s store=%s runner=%s",
             graph_mode,
-            getattr(config, "THREAD_GRAPH_MODE", None),
+            getattr(config, "CELL_GRAPH_MODE", None),
             getattr(system.vector_store, "graph_mode", "<cell-store>"),
             Path(__file__).resolve(),
         )
         logger.info(
-            "STORE_IMPL class=%s module=%s source=%s add_threads_source=%s",
+            "STORE_IMPL class=%s module=%s source=%s add_cells_source=%s",
             type(system.vector_store).__name__,
             type(system.vector_store).__module__,
             inspect.getsourcefile(type(system.vector_store)),
-            inspect.getsourcefile(type(system.vector_store).add_threads),
+            inspect.getsourcefile(type(system.vector_store).add_cells),
         )
         actual_model = Path(system.embedding_model.model_name).expanduser().resolve()
         expected_model = Path(config.EMBEDDING_MODEL).expanduser().resolve()
@@ -376,7 +376,7 @@ def main() -> None:
                 )
 
                 mark_stage("graph_snapshot", sample_idx=sample_idx)
-                threads = system.vector_store.get_all_threads()
+                cells = system.vector_store.get_all_cells()
                 diagnostics = dict(system.vector_store.last_graph_diagnostics)
                 actual_mode = str(diagnostics.get("mode", "")).strip().lower()
                 if actual_mode != graph_mode:
@@ -399,14 +399,14 @@ def main() -> None:
                 logger.info(
                     "GRAPH_READY sample_idx=%s cells=%s edges=%s diagnostics=%s",
                     sample_idx,
-                    len(threads),
-                    sum(len(thread.links) for thread in threads) // 2,
+                    len(cells),
+                    sum(len(cell.links) for cell in cells) // 2,
                     diagnostics,
                 )
                 append_jsonl(
                     graph_handle,
                     graph_snapshot(
-                        threads,
+                        cells,
                         args.graph_name,
                         sample_idx,
                         args.run_id,
@@ -414,9 +414,9 @@ def main() -> None:
                     ),
                 )
                 source_to_cell = {
-                    str(source_id): thread.thread_id
-                    for thread in threads
-                    for node in thread.nodes
+                    str(source_id): cell.cell_id
+                    for cell in cells
+                    for node in cell.nodes
                     for source_id in node.source_turn_ids
                 }
 
@@ -432,7 +432,7 @@ def main() -> None:
                         gold_turns=len(gold_turn_ids),
                     )
                     started = time.perf_counter()
-                    workspace = system.hybrid_retriever.retrieve_workspace(question)
+                    query_context = system.hybrid_retriever.retrieve_query_context(question)
                     latency_ms = (time.perf_counter() - started) * 1000.0
 
                     visited_cell_ids_by_hop = [
@@ -462,15 +462,15 @@ def main() -> None:
                     ]
 
                     routed_turn_ids = sorted(
-                        {str(value) for value in workspace.routed_source_turn_ids}
+                        {str(value) for value in query_context.routed_source_turn_ids}
                     )
                     visited_turn_ids = sorted(
-                        {str(value) for value in workspace.expanded_source_turn_ids}
+                        {str(value) for value in query_context.expanded_source_turn_ids}
                     )
                     selected_turn_ids = list(
                         dict.fromkeys(
                             str(source_id)
-                            for cell in workspace.assembly_cells
+                            for cell in query_context.assembly_cells
                             for source_id in cell.source_turn_ids
                         )
                     )
@@ -503,17 +503,17 @@ def main() -> None:
                         None,
                     )
                     route_stage_ids = list(dict.fromkeys(
-                        str(cell_id) for cell_id in workspace.routed_thread_ids
+                        str(cell_id) for cell_id in query_context.routed_cell_ids
                     ))
                     expansion_stage_ids = list(dict.fromkeys(
-                        str(cell_id) for cell_id in workspace.expanded_thread_ids
+                        str(cell_id) for cell_id in query_context.expanded_cell_ids
                     ))
                     candidate_stage_ids = list(dict.fromkeys(
                         str(cell_id)
-                        for cell_id in getattr(workspace, "candidate_thread_ids", [])
+                        for cell_id in getattr(query_context, "candidate_cell_ids", [])
                     ))
                     selected_stage_ids = list(dict.fromkeys(
-                        str(cell.thread_id) for cell in workspace.assembly_cells
+                        str(cell.cell_id) for cell in query_context.assembly_cells
                     ))
                     logger.info(
                         "QUERY_TRACE query_id=%s hops=%s attempted_edges=%s "
@@ -550,14 +550,14 @@ def main() -> None:
                         "unmapped_gold_turn_ids": [
                             value for value in gold_turn_ids if value not in source_to_cell
                         ],
-                        "seed_cell_ids": sorted(set(workspace.routed_thread_ids)),
-                        "visited_cell_ids": sorted(set(workspace.expanded_thread_ids)),
+                        "seed_cell_ids": sorted(set(query_context.routed_cell_ids)),
+                        "visited_cell_ids": sorted(set(query_context.expanded_cell_ids)),
                         "candidate_cell_ids": candidate_stage_ids,
                         "candidate_turn_ids": visited_turn_ids,
                         "selected_cell_ids": sorted(
                             {
-                                str(cell.thread_id)
-                                for cell in workspace.assembly_cells
+                                str(cell.cell_id)
+                                for cell in query_context.assembly_cells
                             }
                         ),
                         "routed_turn_ids": routed_turn_ids,
@@ -572,7 +572,7 @@ def main() -> None:
                         "selected_stage_ids": selected_stage_ids,
                         "candidate_node_ids": [
                             str(node_id)
-                            for node_id in getattr(workspace, "candidate_node_ids", [])
+                            for node_id in getattr(query_context, "candidate_node_ids", [])
                         ],
                         "evidence_recall": visited_recall,
                         "complete_evidence_recovery": (

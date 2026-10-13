@@ -237,7 +237,7 @@ class LLMClient:
 
     @contextmanager
     def usage_scope(self, **context: Any) -> Iterator[None]:
-        """Attach run/question metadata to all calls in the current thread."""
+        """Attach run/question metadata to all calls in the current cell."""
         previous = _USAGE_CONTEXT.get()
         merged = dict(previous)
         merged.update({key: value for key, value in context.items() if value is not None})
@@ -248,7 +248,7 @@ class LLMClient:
             _USAGE_CONTEXT.reset(token)
 
     def usage_context(self) -> Dict[str, Any]:
-        """Return the current thread's run/question metadata."""
+        """Return the current cell's run/question metadata."""
         return dict(_USAGE_CONTEXT.get())
 
     def count_prompt_tokens(

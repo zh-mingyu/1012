@@ -4,7 +4,7 @@ The persistent store keeps original turns and a small addressable cell for
 coarse routing. Cells are locality units, not semantic memory categories. The
 optional construction model may propose cell boundaries and one routing
 address, but it never rewrites turns into answer-ready facts. Query-time
-assembly is handled by the shared local dynamics in ``workspace.py``.
+assembly is handled by the shared local dynamics in ``query_context.py``.
 """
 
 from __future__ import annotations
@@ -12,9 +12,9 @@ from __future__ import annotations
 import hashlib
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Sequence
 
-from memrewire.core.models.memory_entry import Dialogue, InteractionThread, ThreadNode
+from memrewire.core.models.memory_entry import Dialogue, MemoryCell, SourceTurn
 from memrewire.core.settings import settings as config
-from memrewire.core.thread_store import ThreadStore
+from memrewire.core.cell_graph_store import CellGraphStore
 
 if TYPE_CHECKING:
     from memrewire.core.utils.llm_client import LLMClient
@@ -26,7 +26,7 @@ class MemoryBuilder:
     def __init__(
         self,
         llm_client: LLMClient,
-        vector_store: ThreadStore,
+        vector_store: CellGraphStore,
         window_size: Optional[int] = None,
         enable_parallel_processing: bool = True,
         max_parallel_workers: int = 3,
@@ -37,20 +37,20 @@ class MemoryBuilder:
         # Cells are fixed-size chunks of the complete ordered turn stream. The
         # limit is also used when recovering malformed optional segmentation
         # output, but the canonical path does not call a construction model.
-        self.thread_turn_limit = max(
+        self.cell_turn_limit = max(
             1,
-            int(getattr(config, "THREAD_TURN_LIMIT", 10)),
+            int(getattr(config, "CELL_TURN_LIMIT", 10)),
         )
         # Kept as an explicit ablation switch. The paper's reference path is
         # generation-free and leaves this disabled.
-        self.enable_thread_segmentation = bool(
-            getattr(config, "ENABLE_THREAD_SEGMENTATION", True)
+        self.enable_cell_segmentation = bool(
+            getattr(config, "ENABLE_CELL_SEGMENTATION", True)
         )
         self.enable_parallel_processing = enable_parallel_processing
         self.max_parallel_workers = max_parallel_workers
         self.dialogue_buffer: List[Dialogue] = []
         self.processed_count = 0
-        self.thread_count = 0
+        self.cell_count = 0
 
     def add_dialogue(self, dialogue: Dialogue, auto_process: bool = True) -> None:
         self.dialogue_buffer.append(dialogue)
@@ -81,18 +81,18 @@ class MemoryBuilder:
         self._store_groups(groups)
 
     def _store_groups(self, groups: Sequence[List[Dialogue]]) -> None:
-        threads: List[InteractionThread] = []
+        cells: List[MemoryCell] = []
         for group in groups:
             if not group:
                 continue
-            built = self._build_threads(group, self.thread_count)
-            threads.extend(built)
-            self.thread_count += len(built)
+            built = self._build_cells(group, self.cell_count)
+            cells.extend(built)
+            self.cell_count += len(built)
             # A source turn is processed once even if recovery creates more
             # than one locality cell from the containing stream.
             self.processed_count += len(group)
-        if threads:
-            self.vector_store.add_threads(threads)
+        if cells:
+            self.vector_store.add_cells(cells)
 
     def _split_groups(self, dialogues: Sequence[Dialogue]) -> List[List[Dialogue]]:
         """Keep the input stream contiguous across session boundaries.
@@ -106,11 +106,11 @@ class MemoryBuilder:
         values = list(dialogues)
         return [values] if values else []
 
-    def _build_threads(
+    def _build_cells(
         self,
         dialogues: List[Dialogue],
         ordinal_start: int,
-    ) -> List[InteractionThread]:
+    ) -> List[MemoryCell]:
         """Partition one ordered input stream into source-faithful cells.
 
         Optional construction-model output is treated only as routing
@@ -119,8 +119,8 @@ class MemoryBuilder:
         evidence.
         """
         payload = (
-            self._extract_thread_bundle(dialogues)
-            if self.enable_thread_segmentation
+            self._extract_cell_bundle(dialogues)
+            if self.enable_cell_segmentation
             else {}
         )
         specs = self._normalise_specs(payload, dialogues)
@@ -132,7 +132,7 @@ class MemoryBuilder:
 
         source_order = {item.source_turn_id: index for index, item in enumerate(dialogues)}
         covered: set[str] = set()
-        result: List[InteractionThread] = []
+        result: List[MemoryCell] = []
         for spec in specs:
             raw_ids = [
                 source_id
@@ -159,12 +159,12 @@ class MemoryBuilder:
                     bounded_ids = {item.source_turn_id for item in bounded}
                     bounded_spec = dict(spec)
                     bounded_spec["source_turn_ids"] = list(bounded_ids)
-                    thread = self._materialize_thread(
+                    cell = self._materialize_cell(
                         bounded,
                         bounded_spec,
                         ordinal_start + len(result),
                     )
-                    result.append(thread)
+                    result.append(cell)
                     covered.update(bounded_ids)
 
         # Recover every source turn not claimed by a valid model cell. This is
@@ -177,7 +177,7 @@ class MemoryBuilder:
         for run in self._contiguous_runs(missing_indices):
             for chunk in self._chunk_dialogues([dialogues[index] for index in run]):
                 result.append(
-                    self._materialize_thread(
+                    self._materialize_cell(
                         chunk,
                         {"address_synopsis": ""},
                         ordinal_start + len(result),
@@ -187,7 +187,7 @@ class MemoryBuilder:
         return result
 
     def _chunk_dialogues(self, dialogues: Sequence[Dialogue]) -> Iterable[List[Dialogue]]:
-        limit = max(1, self.thread_turn_limit)
+        limit = max(1, self.cell_turn_limit)
         for start in range(0, len(dialogues), limit):
             chunk = list(dialogues[start : start + limit])
             if chunk:
@@ -211,15 +211,15 @@ class MemoryBuilder:
         payload: Dict[str, Any],
         dialogues: List[Dialogue],
     ) -> List[Dict[str, Any]]:
-        """Accept the bundle schema and the old single-thread test schema."""
+        """Accept the bundle schema and the old single-cell test schema."""
         has_bundle_schema = isinstance(payload, dict) and (
             isinstance(payload.get("spans"), list)
-            or isinstance(payload.get("threads"), list)
+            or isinstance(payload.get("cells"), list)
         )
         raw_specs: Any = (
             payload.get("spans")
             if isinstance(payload, dict) and isinstance(payload.get("spans"), list)
-            else payload.get("threads")
+            else payload.get("cells")
             if has_bundle_schema
             else None
         )
@@ -228,7 +228,7 @@ class MemoryBuilder:
                 isinstance(payload.get("nodes"), list)
                 or payload.get("address")
                 or payload.get("address_synopsis")
-                or payload.get("thread_head")
+                or payload.get("cell_head")
             ):
                 raw_specs = [payload]
             else:
@@ -271,7 +271,7 @@ class MemoryBuilder:
                         raw.get("address")
                         or raw.get("span_address")
                         or raw.get("address_synopsis")
-                        or raw.get("thread_head")
+                        or raw.get("cell_head")
                         or ""
                     ).strip(),
                     "source_turn_ids": list(dict.fromkeys(source_ids)),
@@ -281,16 +281,16 @@ class MemoryBuilder:
             )
         return specs
 
-    def _materialize_thread(
+    def _materialize_cell(
         self,
         dialogues: List[Dialogue],
         spec: Dict[str, Any],
         ordinal: int,
-    ) -> InteractionThread:
+    ) -> MemoryCell:
         source_ids = [dialogue.source_turn_id for dialogue in dialogues]
         session_id = next((dialogue.session_id for dialogue in dialogues if dialogue.session_id), None)
-        thread_key = "|".join([str(session_id or ""), *source_ids])
-        thread_id = "thread-" + hashlib.sha1(thread_key.encode("utf-8")).hexdigest()[:16]
+        cell_key = "|".join([str(session_id or ""), *source_ids])
+        cell_id = "cell-" + hashlib.sha1(cell_key.encode("utf-8")).hexdigest()[:16]
         head = str(spec.get("address_synopsis") or "").strip()
         if not head:
             head = self._fallback_head(dialogues)
@@ -299,26 +299,26 @@ class MemoryBuilder:
         # ``nodes`` returned by older prompts are used only for provenance and
         # boundaries; generated prose is deliberately ignored so construction
         # cannot freeze a query-specific interpretation.
-        nodes = self._materialize_ledger(dialogues, spec.get("nodes"), thread_id)
+        nodes = self._materialize_ledger(dialogues, spec.get("nodes"), cell_id)
         nodes.sort(key=lambda node: (node.ordinal, node.node_id))
         for index, node in enumerate(nodes):
             node.ordinal = index
-            node.node_id = f"{thread_id}:n{index + 1}"
+            node.node_id = f"{cell_id}:n{index + 1}"
 
         timestamps = [dialogue.timestamp for dialogue in dialogues if dialogue.timestamp]
-        return InteractionThread(
-            thread_id=thread_id,
+        return MemoryCell(
+            cell_id=cell_id,
             head=head,
             session_id=session_id,
             ordinal=ordinal,
             start_timestamp=timestamps[0] if timestamps else None,
             end_timestamp=timestamps[-1] if timestamps else None,
             # The bank stores one routing synopsis plus an ordered ledger.
-            # Roles and query-specific relations are created only in workspace.
+            # Roles and query-specific relations are created only in query_context.
             nodes=nodes,
         )
 
-    def _extract_thread_bundle(self, dialogues: List[Dialogue]) -> Dict[str, Any]:
+    def _extract_cell_bundle(self, dialogues: List[Dialogue]) -> Dict[str, Any]:
         dialogue_text = "\n".join(
             f"[{dialogue.source_turn_id}] {dialogue}" for dialogue in dialogues
         )
@@ -338,9 +338,9 @@ turns, so do not rewrite, summarize, or merge turn text.
 This is a construction format, not a retrieval schema. Do NOT emit keywords,
 entity lists, topics, metadata filters, multi-view indexes, or
 permanent answer roles. Do not invent facts. Every source turn should belong to
-exactly one thread; the implementation will recover omissions.
+exactly one cell; the implementation will recover omissions.
 
-Return ONLY JSON (the `threads` key is accepted for compatibility, but `spans`
+Return ONLY JSON (the `cells` key is accepted for compatibility, but `spans`
 is the preferred name):
 {{
   "spans": [
@@ -380,8 +380,8 @@ is the preferred name):
     def _materialize_ledger(
         dialogues: List[Dialogue],
         raw_nodes: Any,
-        thread_id: str,
-    ) -> List[ThreadNode]:
+        cell_id: str,
+    ) -> List[SourceTurn]:
         """Materialize one node per original turn, preserving exact text.
 
         Older extraction prompts sometimes returned node prose.  We only use
@@ -402,7 +402,7 @@ is the preferred name):
                         "speakers": item.get("speakers") or [],
                     })
 
-        nodes: List[ThreadNode] = []
+        nodes: List[SourceTurn] = []
         for index, dialogue in enumerate(dialogues):
             metadata = metadata_by_source.get(dialogue.source_turn_id, {})
             speakers = [
@@ -411,8 +411,8 @@ is the preferred name):
                 if str(value).strip()
             ]
             nodes.append(
-                ThreadNode(
-                    node_id=f"{thread_id}:raw{index + 1}",
+                SourceTurn(
+                    node_id=f"{cell_id}:raw{index + 1}",
                     text=f"{dialogue.speaker}: {dialogue.content}",
                     source_turn_ids=[dialogue.source_turn_id],
                     ordinal=index,

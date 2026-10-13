@@ -11,7 +11,7 @@ from memrewire.core.models.memory_entry import MemoryEntry
 from memrewire.core.settings import settings as config
 if TYPE_CHECKING:
     from memrewire.core.utils.llm_client import LLMClient
-from memrewire.core.workspace import MemoryWorkspace
+from memrewire.core.query_context import QueryContext
 
 
 _MAX_ANSWER_ATTEMPTS = 1
@@ -67,16 +67,16 @@ class AnswerGenerator:
         return cls._NUMBER_WORDS.get(number, value)
 
     @classmethod
-    def _normalise_workspace_temporal_answer(
+    def _normalise_query_context_temporal_answer(
         cls,
         answer: str,
         query: str,
-        workspace: MemoryWorkspace,
+        query_context: QueryContext,
     ) -> str:
         """Use the most query-anchored temporal evidence for canonicalization."""
         query_tokens = cls._content_tokens(query)
         candidates = []
-        for item in workspace.evidence:
+        for item in query_context.evidence:
             hint = cls._calendar_hints(item.text, item.timestamp)
             rewritten = cls._normalise_temporal_answer(answer, hint)
             if rewritten == answer:
@@ -162,18 +162,18 @@ class AnswerGenerator:
     def generate_answer(
         self,
         query: str,
-        contexts: Union[List[MemoryEntry], MemoryWorkspace],
+        contexts: Union[List[MemoryEntry], QueryContext],
     ) -> str:
         if not contexts:
             return "No relevant information found"
         context = (
-            self._format_workspace(contexts, query=query)
-            if isinstance(contexts, MemoryWorkspace)
+            self._format_query_context(contexts, query=query)
+            if isinstance(contexts, QueryContext)
             else self._format_flat(contexts)
         )
         question_type = (
             contexts.question_type
-            if isinstance(contexts, MemoryWorkspace)
+            if isinstance(contexts, QueryContext)
             else "general"
         )
         prompt = self._build_prompt(query, context, question_type=question_type)
@@ -185,9 +185,9 @@ class AnswerGenerator:
         budget_dropped_cells = 0
         counted_prompt_tokens = None
         if input_limit:
-            if not isinstance(contexts, MemoryWorkspace):
+            if not isinstance(contexts, QueryContext):
                 raise RuntimeError(
-                    "ANSWER_MAX_INPUT_TOKENS requires a token-countable MemoryWorkspace"
+                    "ANSWER_MAX_INPUT_TOKENS requires a token-countable QueryContext"
                 )
             template_kwargs = {}
             if "qwen" in str(self.llm_client.model or "").lower():
@@ -203,7 +203,7 @@ class AnswerGenerator:
                 raise RuntimeError(
                     "ANSWER_MAX_INPUT_TOKENS is set but no local tokenizer is configured"
                 )
-            minimum_cells = max(1, int(getattr(config, "WORKSPACE_MIN_VISIBLE_CELLS", 1)))
+            minimum_cells = max(1, int(getattr(config, "CONTEXT_MIN_VISIBLE_CELLS", 1)))
             while (
                 counted_prompt_tokens > int(input_limit)
                 and len(contexts.evidence) > minimum_cells
@@ -217,7 +217,7 @@ class AnswerGenerator:
                 )
                 contexts.evidence.pop(drop_index)
                 budget_dropped_cells += 1
-                context = self._format_workspace(contexts, query=query)
+                context = self._format_query_context(contexts, query=query)
                 prompt = self._build_prompt(query, context, question_type=question_type)
                 messages[1]["content"] = prompt
                 counted_prompt_tokens = self.llm_client.count_prompt_tokens(
@@ -265,8 +265,8 @@ class AnswerGenerator:
                     getattr(config, "ENABLE_TEMPORAL_CALIBRATION", True)
                     and "temporal" in str(question_type).lower()
                 ):
-                    if isinstance(contexts, MemoryWorkspace):
-                        answer = self._normalise_workspace_temporal_answer(
+                    if isinstance(contexts, QueryContext):
+                        answer = self._normalise_query_context_temporal_answer(
                             answer,
                             query,
                             contexts,
@@ -430,12 +430,12 @@ class AnswerGenerator:
         return "; calendar-hint=" + "; ".join(hints) if hints else ""
 
     @classmethod
-    def _format_workspace(cls, workspace: MemoryWorkspace, query: str = "") -> str:
-        compact = bool(getattr(config, "WORKSPACE_COMPACT_SERIALIZATION", True))
-        source_only = bool(getattr(config, "WORKSPACE_SOURCE_ONLY_SERIALIZATION", False))
+    def _format_query_context(cls, query_context: QueryContext, query: str = "") -> str:
+        compact = bool(getattr(config, "CONTEXT_COMPACT_SERIALIZATION", True))
+        source_only = bool(getattr(config, "CONTEXT_SOURCE_ONLY_SERIALIZATION", False))
         if source_only:
-            temporal_query = "temporal" in str(workspace.question_type or "").lower()
-            char_budget = max(0, int(getattr(config, "WORKSPACE_SOURCE_CHAR_BUDGET", 900)))
+            temporal_query = "temporal" in str(query_context.question_type or "").lower()
+            char_budget = max(0, int(getattr(config, "CONTEXT_SOURCE_CHAR_BUDGET", 900)))
             lines: List[str] = []
             used_chars = 0
             serialized_ids: List[str] = []
@@ -443,7 +443,7 @@ class AnswerGenerator:
             # time. If serialization must trim text, retain the highest-ranked
             # source turns first, then restore the original temporal order.
             ranked_items = sorted(
-                workspace.assembly_cells,
+                query_context.assembly_cells,
                 key=lambda item: (
                     -float(getattr(item, "readout_score", 0.0)),
                     str(getattr(item, "evidence_id", "")),
@@ -455,7 +455,7 @@ class AnswerGenerator:
                 if not text:
                     continue
                 source = ", ".join(item.source_turn_ids) or "unknown"
-                metadata = f"[cell={item.thread_id}; source={source}"
+                metadata = f"[cell={item.cell_id}; source={source}"
                 if item.timestamp:
                     metadata += f"; time={item.timestamp}"
                 metadata += "]"
@@ -469,12 +469,12 @@ class AnswerGenerator:
                     continue
                 retained_ids.add(str(item.evidence_id))
                 used_chars += len(block) + 1
-            for item in workspace.assembly_cells:
+            for item in query_context.assembly_cells:
                 if str(item.evidence_id) not in retained_ids:
                     continue
                 text = re.sub(r"\s+", " ", str(item.text or "")).strip()
                 source = ", ".join(item.source_turn_ids) or "unknown"
-                metadata = f"[cell={item.thread_id}; source={source}"
+                metadata = f"[cell={item.cell_id}; source={source}"
                 if item.timestamp:
                     metadata += f"; time={item.timestamp}"
                 metadata += "]"
@@ -487,17 +487,17 @@ class AnswerGenerator:
                 serialized_ids.append(item.evidence_id)
             if not lines:
                 lines.append("No visible source cell.")
-            workspace.serialized_cell_count = len(serialized_ids)
+            query_context.serialized_cell_count = len(serialized_ids)
             return "\n".join(lines)
         if compact:
             lines = [
-                "Source cells from the transient workspace (roles are temporary):",
+                "Source cells from the transient query context (roles are temporary):",
             ]
             # The default address is the question itself. Repeating it costs
             # tokens without adding evidence; retain it only for an explicit
             # planner-produced address.
-            if workspace.address and workspace.address.strip() != str(query or "").strip():
-                lines.append(f"Address: {workspace.address}")
+            if query_context.address and query_context.address.strip() != str(query or "").strip():
+                lines.append(f"Address: {query_context.address}")
         else:
             lines = []
         if not compact:
@@ -506,22 +506,22 @@ class AnswerGenerator:
             # textual interface differs between the two modes.
             lines = [
                 "Transient role-bound state (query-local; source substrate unchanged):",
-                f"Address: {workspace.address}",
-                f"Question type: {workspace.question_type}; complexity: {workspace.complexity}",
+                f"Address: {query_context.address}",
+                f"Question type: {query_context.question_type}; complexity: {query_context.complexity}",
             ]
             lines.append(
-                f"Stable activation readout (visibility cutoff={workspace.visibility_cutoff:.3f}; "
-                f"field coverage diagnostic={workspace.assembly_coverage:.3f}; "
-                f"steps={workspace.rollout_steps}; delta={workspace.state_delta:.4f}; "
-                f"mode={workspace.dynamics_mode}):"
+                f"Stable activation readout (visibility cutoff={query_context.visibility_cutoff:.3f}; "
+                f"field coverage diagnostic={query_context.assembly_coverage:.3f}; "
+                f"steps={query_context.rollout_steps}; delta={query_context.state_delta:.4f}; "
+                f"mode={query_context.dynamics_mode}):"
             )
             guard = int(
-                getattr(workspace, "prompt_guard_tokens", 0)
-                or getattr(config, "WORKSPACE_PROMPT_GUARD_TOKENS", 0)
+                getattr(query_context, "prompt_guard_tokens", 0)
+                or getattr(config, "CONTEXT_PROMPT_GUARD_TOKENS", 0)
             )
             serialized_ids: List[str] = []
             estimated_tokens = sum(max(1, len(line) // 4) for line in lines)
-            for item in workspace.assembly_cells:
+            for item in query_context.assembly_cells:
                 source = ", ".join(item.source_turn_ids) or "unknown"
                 source_time = f"; source-time={item.timestamp}" if item.timestamp else ""
                 hints = (
@@ -532,12 +532,12 @@ class AnswerGenerator:
                 block = (
                     f"[Assembly cell {item.evidence_id}] state={item.activation_score:.3f}; "
                     f"seed={item.seed_affinity:.3f}; support={item.support_influence:.3f}; "
-                    f"inhibition={item.inhibition_score:.3f}; thread={item.thread_id}; "
+                    f"inhibition={item.inhibition_score:.3f}; cell={item.cell_id}; "
                     f"role-vector=(drive={item.query_drive:.3f}, "
                     f"local-support={item.local_support:.3f}, "
                     f"relay={item.relay_mediation:.3f}); "
                     f"source={source}{source_time}{hints}\n"
-                    f"Trajectory: {item.thread_head}\n{item.text}"
+                    f"Trajectory: {item.cell_head}\n{item.text}"
                 )
                 block_tokens = max(1, len(block) // 4)
                 if guard and serialized_ids and estimated_tokens + block_tokens > guard:
@@ -545,15 +545,15 @@ class AnswerGenerator:
                 lines.append(block)
                 serialized_ids.append(item.evidence_id)
                 estimated_tokens += block_tokens
-            if len(serialized_ids) < len(workspace.assembly_cells):
-                omitted = len(workspace.assembly_cells) - len(serialized_ids)
+            if len(serialized_ids) < len(query_context.assembly_cells):
+                omitted = len(query_context.assembly_cells) - len(serialized_ids)
                 lines.append(
                     f"[Serialization note] {omitted} lower-activation cells omitted from this prompt."
                 )
-            workspace.serialized_cell_count = len(serialized_ids)
-            if workspace.relations:
+            query_context.serialized_cell_count = len(serialized_ids)
+            if query_context.relations:
                 lines.append("Local relations:")
-                for relation in workspace.relations:
+                for relation in query_context.relations:
                     if (
                         not serialized_ids
                         or relation.source_evidence_id not in serialized_ids
@@ -573,14 +573,14 @@ class AnswerGenerator:
         # The compact branch above is the experimental lower-token interface.
         # It is deliberately kept separate from the high-fidelity reference.
         guard = int(
-            getattr(workspace, "prompt_guard_tokens", 0)
-            or getattr(config, "WORKSPACE_PROMPT_GUARD_TOKENS", 0)
+            getattr(query_context, "prompt_guard_tokens", 0)
+            or getattr(config, "CONTEXT_PROMPT_GUARD_TOKENS", 0)
         )
-        temporal_query = "temporal" in str(workspace.question_type or "").lower()
+        temporal_query = "temporal" in str(query_context.question_type or "").lower()
         serialized_ids: List[str] = []
-        seen_threads: set[str] = set()
+        seen_cells: set[str] = set()
         estimated_tokens = sum(max(1, int(math.ceil(len(line) / 3.0))) for line in lines)
-        for item in workspace.assembly_cells:
+        for item in query_context.assembly_cells:
             source = ", ".join(item.source_turn_ids) or "unknown"
             source_time = f"|time={item.timestamp}" if temporal_query and item.timestamp else ""
             hints = (
@@ -588,30 +588,30 @@ class AnswerGenerator:
                 if temporal_query and getattr(config, "ENABLE_TEMPORAL_CALIBRATION", True)
                 else ""
             )
-            thread_id = str(item.thread_id)
-            thread_header = ""
-            if thread_id not in seen_threads:
+            cell_id = str(item.cell_id)
+            cell_header = ""
+            if cell_id not in seen_cells:
                 head_limit = 72
-                head = re.sub(r"\s+", " ", str(item.thread_head or "")).strip()[:head_limit]
-                thread_header = f"T{thread_id}: {head}\n" if head else f"T{thread_id}:\n"
+                head = re.sub(r"\s+", " ", str(item.cell_head or "")).strip()[:head_limit]
+                cell_header = f"T{cell_id}: {head}\n" if head else f"T{cell_id}:\n"
             role = str(item.functional_role or item.role or "context")
-            block = f"{thread_header}[Assembly cell {item.evidence_id}] role={role}{source_time}{hints} {item.text}"
+            block = f"{cell_header}[Assembly cell {item.evidence_id}] role={role}{source_time}{hints} {item.text}"
             block_tokens = max(1, int(math.ceil(len(block) / 3.0)))
             if guard and serialized_ids and estimated_tokens + block_tokens > guard:
                 continue
-            if thread_header:
-                lines.append(thread_header.rstrip("\n"))
-                seen_threads.add(thread_id)
-            lines.append(block[len(thread_header):] if thread_header else block)
+            if cell_header:
+                lines.append(cell_header.rstrip("\n"))
+                seen_cells.add(cell_id)
+            lines.append(block[len(cell_header):] if cell_header else block)
             serialized_ids.append(item.evidence_id)
             estimated_tokens += block_tokens
-        if len(serialized_ids) < len(workspace.assembly_cells):
-            omitted = len(workspace.assembly_cells) - len(serialized_ids)
-            lines.append(f"[Omitted {omitted} lower-utility cells due to the workspace token budget]")
-        workspace.serialized_cell_count = len(serialized_ids)
-        if workspace.relations:
+        if len(serialized_ids) < len(query_context.assembly_cells):
+            omitted = len(query_context.assembly_cells) - len(serialized_ids)
+        lines.append(f"[Omitted {omitted} lower-utility cells due to the query context token budget]")
+        query_context.serialized_cell_count = len(serialized_ids)
+        if query_context.relations:
             lines.append("Local relations:")
-            for relation in workspace.relations:
+            for relation in query_context.relations:
                 if (
                     not serialized_ids
                     or relation.source_evidence_id not in serialized_ids
@@ -626,13 +626,13 @@ class AnswerGenerator:
 
     @staticmethod
     def _format_contexts(
-        contexts: Union[List[MemoryEntry], MemoryWorkspace],
+        contexts: Union[List[MemoryEntry], QueryContext],
         query: str = "",
     ) -> str:
         """Compatibility adapter used by the LoCoMo evaluator."""
         return (
-            AnswerGenerator._format_workspace(contexts, query=query)
-            if isinstance(contexts, MemoryWorkspace)
+            AnswerGenerator._format_query_context(contexts, query=query)
+            if isinstance(contexts, QueryContext)
             else AnswerGenerator._format_flat(contexts)
         )
 
@@ -681,7 +681,7 @@ turn text (for example, yesterday, last year, or last Saturday) and report the
 resulting date or year when the question asks when. Preserve the temporal
 granularity supported by the evidence.
 """ if temporal_calibration and "temporal" in mode else ""
-        if getattr(config, "WORKSPACE_COMPACT_SERIALIZATION", True):
+        if getattr(config, "CONTEXT_COMPACT_SERIALIZATION", True):
             return f"""
 Answer the question using only the transient role-bound state below.
 

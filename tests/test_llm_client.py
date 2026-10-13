@@ -18,7 +18,7 @@ _SAVED_MODULES = {
         "memrewire.core.utils.llm_client",
         "memrewire.core.models",
         "memrewire.core.models.memory_entry",
-        "memrewire.core.workspace",
+        "memrewire.core.query_context",
         "memrewire.core.answer_generator",
     )
 }
@@ -56,9 +56,9 @@ sys.modules.setdefault("memrewire.core.models", models_package)
 memory_entry_module = ModuleType("memrewire.core.models.memory_entry")
 memory_entry_module.MemoryEntry = type("MemoryEntry", (), {})
 sys.modules.setdefault("memrewire.core.models.memory_entry", memory_entry_module)
-workspace_module = ModuleType("memrewire.core.workspace")
-workspace_module.MemoryWorkspace = type("MemoryWorkspace", (), {})
-sys.modules.setdefault("memrewire.core.workspace", workspace_module)
+query_context_module = ModuleType("memrewire.core.query_context")
+query_context_module.QueryContext = type("QueryContext", (), {})
+sys.modules.setdefault("memrewire.core.query_context", query_context_module)
 AnswerGenerator = _load_module(
     "memrewire.core.answer_generator",
     _ROOT / "memrewire" / "core" / "answer_generator.py",
@@ -70,7 +70,7 @@ merge_token_summaries = _load_module(
 
 # This module uses light-weight import stubs for isolated client tests. Do not
 # leave those stubs in sys.modules, otherwise collection order changes the
-# imports seen by the real workspace and topology tests.
+# imports seen by the real query_context and topology tests.
 for _name, _module in _SAVED_MODULES.items():
     if _module is None:
         sys.modules.pop(_name, None)
@@ -226,29 +226,29 @@ def test_answer_generation_does_not_retry_invalid_json():
 
 def test_full_prompt_budget_prunes_cells_before_request(monkeypatch):
     settings = sys.modules["memrewire.core.settings"].settings
-    monkeypatch.setattr(
-        sys.modules[AnswerGenerator.__module__],
-        "MemoryWorkspace",
-        workspace_module.MemoryWorkspace,
+    monkeypatch.setitem(
+        AnswerGenerator.generate_answer.__globals__,
+        "QueryContext",
+        query_context_module.QueryContext,
     )
     monkeypatch.setattr(settings, "ANSWER_MAX_INPUT_TOKENS", 1800, raising=False)
-    monkeypatch.setattr(settings, "WORKSPACE_MIN_VISIBLE_CELLS", 1, raising=False)
+    monkeypatch.setattr(settings, "CONTEXT_MIN_VISIBLE_CELLS", 1, raising=False)
     monkeypatch.setattr(settings, "USE_JSON_FORMAT", True, raising=False)
     monkeypatch.setattr(
         AnswerGenerator,
-        "_format_workspace",
-        classmethod(lambda cls, workspace, query="": " ".join(workspace.evidence)),
+        "_format_query_context",
+        classmethod(lambda cls, query_context, query="": " ".join(query_context.evidence)),
     )
 
     client = _AnswerClient(['{"answer":"Alice"}'])
-    workspace = workspace_module.MemoryWorkspace()
-    workspace.evidence = ["CELL highest", "CELL middle", "CELL lowest"]
-    workspace.question_type = "general"
+    query_context = query_context_module.QueryContext()
+    query_context.evidence = ["CELL highest", "CELL middle", "CELL lowest"]
+    query_context.question_type = "general"
 
-    answer = AnswerGenerator(client).generate_answer("Who met Bob?", workspace)
+    answer = AnswerGenerator(client).generate_answer("Who met Bob?", query_context)
 
     assert answer == "Alice"
-    assert workspace.evidence == ["CELL highest"]
+    assert query_context.evidence == ["CELL highest"]
     assert client.prompt_counts == [3, 2, 1]
     assert len(client.calls) == 1
 

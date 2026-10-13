@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from memrewire.core.models.memory_entry import MemoryEntry
 from memrewire.core.settings import settings as config
-from memrewire.core.thread_store import ThreadStore
+from memrewire.core.cell_graph_store import CellGraphStore
 if TYPE_CHECKING:
     from memrewire.core.utils.llm_client import LLMClient
-from memrewire.core.workspace import MemoryWorkspace, build_transient_assembly
+from memrewire.core.query_context import QueryContext, build_query_context
 
 
 class MemRewireRetriever:
@@ -25,7 +25,7 @@ class MemRewireRetriever:
     def __init__(
         self,
         llm_client: LLMClient,
-        vector_store: ThreadStore,
+        vector_store: CellGraphStore,
         enable_planning: Optional[bool] = None,
         enable_reflection: bool = False,
         max_reflection_rounds: int = 0,
@@ -35,82 +35,82 @@ class MemRewireRetriever:
         self.llm_client = llm_client
         self.vector_store = vector_store
         self.address_route_width = int(
-            getattr(config, "ADDRESS_ROUTE_WIDTH", getattr(config, "THREAD_ROUTE_TOP_K", 16))
+            getattr(config, "ADDRESS_ROUTE_WIDTH", getattr(config, "CELL_ROUTE_TOP_K", 16))
         )
         # The canonical method scores every cell once and uses a
         # mean-plus-standard-deviation threshold to form the seed set.
-        self.thread_route_probe_top_k = 0
+        self.cell_route_probe_top_k = 0
         self.receptive_field_hops = int(
-            getattr(config, "RECEPTIVE_FIELD_HOPS", getattr(config, "THREAD_MAX_HOPS", 3))
+            getattr(config, "RECEPTIVE_FIELD_HOPS", getattr(config, "CELL_MAX_HOPS", 3))
         )
         self.receptive_field_scope = int(
-            getattr(config, "RECEPTIVE_FIELD_SCOPE", getattr(config, "THREAD_MAX_EXPANDED", 32))
+            getattr(config, "RECEPTIVE_FIELD_SCOPE", getattr(config, "CELL_MAX_EXPANDED", 32))
         )
         self.broad_receptive_field_scope = self.receptive_field_scope
         # Historical attributes remain aliases for external launchers.
-        self.thread_route_top_k = self.address_route_width
-        self.thread_max_hops = self.receptive_field_hops
-        self.thread_max_expanded = self.receptive_field_scope
-        self.thread_adaptive_max_expanded = self.broad_receptive_field_scope
+        self.cell_route_top_k = self.address_route_width
+        self.cell_max_hops = self.receptive_field_hops
+        self.cell_max_expanded = self.receptive_field_scope
+        self.cell_adaptive_max_expanded = self.broad_receptive_field_scope
         # The field determines its own visible basins. This guard is applied
         # only when serializing a prompt for the answer model.
-        self.workspace_prompt_guard_tokens = int(
-            getattr(config, "WORKSPACE_PROMPT_GUARD_TOKENS", 6000)
+        self.query_context_prompt_guard_tokens = int(
+            getattr(config, "CONTEXT_PROMPT_GUARD_TOKENS", 6000)
         )
         self.source_readout_k = int(
             getattr(
                 config,
                 "SOURCE_READOUT_K",
-                getattr(config, "WORKSPACE_MAX_READOUT_CELLS", 4),
+                getattr(config, "CONTEXT_MAX_READOUT_CELLS", 4),
             )
         )
         # Historical field name retained for evaluator compatibility.
-        self.workspace_max_readout_cells = self.source_readout_k
-        self.workspace_readout_token_budget = int(
-            getattr(config, "WORKSPACE_READOUT_TOKEN_BUDGET", 0)
+        self.query_context_max_readout_cells = self.source_readout_k
+        self.query_context_readout_token_budget = int(
+            getattr(config, "CONTEXT_READOUT_TOKEN_BUDGET", 0)
         )
-        self.workspace_readout_mode = str(
-            getattr(config, "WORKSPACE_READOUT_MODE", "query_similarity")
+        self.query_context_readout_mode = str(
+            getattr(config, "CONTEXT_READOUT_MODE", "query_similarity")
         )
-        self.workspace_min_visible_cells = int(
-            getattr(config, "WORKSPACE_MIN_VISIBLE_CELLS", 1)
+        self.query_context_min_visible_cells = int(
+            getattr(config, "CONTEXT_MIN_VISIBLE_CELLS", 1)
         )
-        self.workspace_max_relations = int(getattr(config, "WORKSPACE_MAX_RELATIONS", 12))
-        self.workspace_node_seed_weight = float(
-            getattr(config, "WORKSPACE_NODE_SEED_WEIGHT", 0.80)
+        self.query_context_max_relations = int(getattr(config, "CONTEXT_MAX_RELATIONS", 12))
+        self.query_context_node_seed_weight = float(
+            getattr(config, "CONTEXT_NODE_SEED_WEIGHT", 0.80)
         )
-        self.workspace_rollout_steps = int(
-            getattr(config, "WORKSPACE_ROLLOUT_STEPS", 20)
+        self.query_context_rollout_steps = int(
+            getattr(config, "CONTEXT_ROLLOUT_STEPS", 20)
         )
-        self.workspace_step_size = float(
-            getattr(config, "WORKSPACE_STEP_SIZE", 0.35)
+        self.query_context_step_size = float(
+            getattr(config, "CONTEXT_STEP_SIZE", 0.35)
         )
-        self.workspace_convergence_tol = float(
-            getattr(config, "WORKSPACE_CONVERGENCE_TOL", 1e-3)
+        self.query_context_convergence_tol = float(
+            getattr(config, "CONTEXT_CONVERGENCE_TOL", 1e-3)
         )
-        self.workspace_visibility_floor = float(
-            getattr(config, "WORKSPACE_VISIBILITY_FLOOR", 0.30)
+        self.query_context_visibility_floor = float(
+            getattr(config, "CONTEXT_VISIBILITY_FLOOR", 0.30)
         )
-        self.workspace_compatibility_scale = float(
-            getattr(config, "WORKSPACE_COMPATIBILITY_SCALE", 1.35)
+        self.query_context_compatibility_scale = float(
+            getattr(config, "CONTEXT_COMPATIBILITY_SCALE", 1.35)
         )
-        self.workspace_inhibition_scale = float(
-            getattr(config, "WORKSPACE_INHIBITION_SCALE", 0.35)
+        self.query_context_inhibition_scale = float(
+            getattr(config, "CONTEXT_INHIBITION_SCALE", 0.35)
         )
         self.enable_planning = (
             bool(enable_planning)
             if enable_planning is not None
-            else bool(getattr(config, "ENABLE_THREAD_ADDRESS_PLANNER", False))
+            else bool(getattr(config, "ENABLE_CELL_ADDRESS_PLANNER", False))
         )
         # Reflection is intentionally not part of the main method: it would
         # turn local assembly back into repeated query-conditioned retrieval.
         self.enable_reflection = False
 
-    def retrieve_workspace(
+    def retrieve_query_context(
         self,
         query: str,
         enable_reflection: Optional[bool] = None,
-    ) -> MemoryWorkspace:
+    ) -> QueryContext:
         logger = logging.getLogger("paired_graph.retrieval")
         plan = self._plan_address(query) if self.enable_planning else {}
         address = str(plan.get("address") or query).strip() or query
@@ -135,7 +135,7 @@ class MemRewireRetriever:
         expanded = self.vector_store.expand(
             routes,
             max_hops=self.receptive_field_hops,
-            max_threads=None,
+            max_cells=None,
         )
         logger.info(
             "RETRIEVAL_EXPANSION_DONE visited_cells=%s traversed_edges=%s elapsed_seconds=%.2f",
@@ -145,71 +145,71 @@ class MemRewireRetriever:
         )
         assembly_started = time.perf_counter()
         logger.info("RETRIEVAL_ASSEMBLY_START expanded_cells=%s", len(expanded))
-        workspace = build_transient_assembly(
+        query_context = build_query_context(
             query=query,
             address=address,
             query_vector=query_vector,
             routes=routes,
             expanded=expanded,
             plan=plan,
-            min_readout=self.workspace_min_visible_cells,
-            max_relations=self.workspace_max_relations,
-            node_seed_weight=self.workspace_node_seed_weight,
-            rollout_steps=self.workspace_rollout_steps,
-            step_size=self.workspace_step_size,
-            convergence_tol=self.workspace_convergence_tol,
-            visibility_floor=self.workspace_visibility_floor,
-            prompt_guard_tokens=self.workspace_prompt_guard_tokens,
+            min_readout=self.query_context_min_visible_cells,
+            max_relations=self.query_context_max_relations,
+            node_seed_weight=self.query_context_node_seed_weight,
+            rollout_steps=self.query_context_rollout_steps,
+            step_size=self.query_context_step_size,
+            convergence_tol=self.query_context_convergence_tol,
+            visibility_floor=self.query_context_visibility_floor,
+            prompt_guard_tokens=self.query_context_prompt_guard_tokens,
             max_readout_cells=self.source_readout_k,
-            readout_token_budget=self.workspace_readout_token_budget,
-            readout_mode=self.workspace_readout_mode,
-            compatibility_scale=self.workspace_compatibility_scale,
-            inhibition_scale=self.workspace_inhibition_scale,
+            readout_token_budget=self.query_context_readout_token_budget,
+            readout_mode=self.query_context_readout_mode,
+            compatibility_scale=self.query_context_compatibility_scale,
+            inhibition_scale=self.query_context_inhibition_scale,
         )
         logger.info(
             "RETRIEVAL_ASSEMBLY_DONE candidate_nodes=%s evidence_nodes=%s elapsed_seconds=%.2f",
-            workspace.node_candidate_count,
-            len(workspace.evidence),
+            query_context.node_candidate_count,
+            len(query_context.evidence),
             time.perf_counter() - assembly_started,
         )
-        workspace.address_planner_calls = 1 if self.enable_planning else 0
-        workspace.indexed_thread_count = self.vector_store.count()
+        query_context.address_planner_calls = 1 if self.enable_planning else 0
+        query_context.indexed_cell_count = self.vector_store.count()
         graph_diagnostics = getattr(self.vector_store, "last_graph_diagnostics", {}) or {}
-        workspace.topology_mode = str(graph_diagnostics.get("mode", "operator-aware"))
-        workspace.topology_candidate_edges = int(graph_diagnostics.get("candidate_edges", 0))
-        workspace.topology_selected_edges = int(
+        query_context.topology_mode = str(graph_diagnostics.get("mode", "operator-aware"))
+        query_context.topology_candidate_edges = int(graph_diagnostics.get("candidate_edges", 0))
+        query_context.topology_selected_edges = int(
             graph_diagnostics.get("selected_edges", graph_diagnostics.get("selected_optional_edges", 0))
         )
-        workspace.topology_optional_edges = int(graph_diagnostics.get("selected_optional_edges", 0))
-        workspace.topology_mandatory_edges = int(graph_diagnostics.get("mandatory_edges", 0))
-        workspace.topology_edge_budget = int(graph_diagnostics.get("baseline_edge_budget", 0))
-        workspace.topology_operator_objective = float(graph_diagnostics.get("objective", 0.0))
-        workspace.topology_mean_gain = float(graph_diagnostics.get("mean_optional_gain", 0.0))
-        workspace.topology_cross_session_edges = int(graph_diagnostics.get("cross_session_edges", 0))
-        workspace.local_edge_visits += self.vector_store.last_expansion_edges
-        workspace.route_probe_count = self.vector_store.count()
-        workspace.adaptive_route = False
-        workspace.route_width = len(routes)
-        workspace.receptive_field_scope = len(expanded)
+        query_context.topology_optional_edges = int(graph_diagnostics.get("selected_optional_edges", 0))
+        query_context.topology_mandatory_edges = int(graph_diagnostics.get("mandatory_edges", 0))
+        query_context.topology_edge_budget = int(graph_diagnostics.get("baseline_edge_budget", 0))
+        query_context.topology_operator_objective = float(graph_diagnostics.get("objective", 0.0))
+        query_context.topology_mean_gain = float(graph_diagnostics.get("mean_optional_gain", 0.0))
+        query_context.topology_cross_session_edges = int(graph_diagnostics.get("cross_session_edges", 0))
+        query_context.local_edge_visits += self.vector_store.last_expansion_edges
+        query_context.route_probe_count = self.vector_store.count()
+        query_context.adaptive_route = False
+        query_context.route_width = len(routes)
+        query_context.receptive_field_scope = len(expanded)
         print(
             f"[MemRewire] routed={len(routes)} expanded={len(expanded)} "
-            f"nodes={workspace.node_candidate_count} visible={len(workspace.evidence)} "
-            f"activation={workspace.activation_total:.3f}"
+            f"nodes={query_context.node_candidate_count} visible={len(query_context.evidence)} "
+            f"activation={query_context.activation_total:.3f}"
         )
-        return workspace
+        return query_context
 
     def retrieve(self, query: str, enable_reflection: Optional[bool] = None) -> List[MemoryEntry]:
-        """Compatibility API returning the selected workspace nodes as flat items."""
-        workspace = self.retrieve_workspace(query, enable_reflection=enable_reflection)
+        """Compatibility API returning the selected query_context nodes as flat items."""
+        query_context = self.retrieve_query_context(query, enable_reflection=enable_reflection)
         return [
             MemoryEntry(
                 entry_id=item.node_id,
                 lossless_restatement=item.text,
                 timestamp=item.timestamp,
                 source_turn_ids=item.source_turn_ids,
-                thread_id=item.thread_id,
+                cell_id=item.cell_id,
             )
-            for item in workspace.evidence
+            for item in query_context.evidence
         ]
     def _plan_address(self, query: str) -> Dict[str, Any]:
         """Create one address plus rendering diagnostics; never emit search queries."""
@@ -240,11 +240,11 @@ Return ONLY JSON:
                 messages,
                 temperature=0.0,
                 response_format=response_format,
-                stage="retrieval.thread_address",
+                stage="retrieval.cell_address",
             )
             plan = self.llm_client.extract_json(response)
             if not isinstance(plan, dict):
-                raise ValueError("thread address planner must return an object")
+                raise ValueError("cell address planner must return an object")
             return plan
         except Exception as error:
             print(f"[MemRewire] address planning failed; using question: {error}")
@@ -256,10 +256,4 @@ Return ONLY JSON:
             }
 
 
-# Compatibility names used by the copied evaluator and older launchers.  The
-# canonical name makes it explicit which method is being evaluated.
-TransientRoleBindingRetriever = MemRewireRetriever
-TransientAssemblyRetriever = MemRewireRetriever
-AssemblyInducer = MemRewireRetriever
-ThreadWorkspaceRetriever = MemRewireRetriever
-HybridRetriever = MemRewireRetriever
+QueryContextRetriever = MemRewireRetriever

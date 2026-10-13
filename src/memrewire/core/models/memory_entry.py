@@ -6,8 +6,8 @@ import uuid
 from pydantic import BaseModel, Field
 
 
-class ThreadNode(BaseModel):
-    """One original dialogue turn in an interaction-thread ledger."""
+class SourceTurn(BaseModel):
+    """One original dialogue turn in an interaction-cell ledger."""
 
     node_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     text: str
@@ -16,30 +16,30 @@ class ThreadNode(BaseModel):
     source_ordinal: int = 0
     timestamp: Optional[str] = None
     speakers: List[str] = Field(default_factory=list)
-    # Nodes are embedded/scored only after their parent thread has been routed.
+    # Nodes are embedded/scored only after their parent cell has been routed.
     embedding: List[float] = Field(default_factory=list)
 
 
-class ThreadLink(BaseModel):
-    """A persistent edge for local traversal between interaction threads."""
+class CellLink(BaseModel):
+    """A persistent edge for local traversal between interaction cells."""
 
-    target_thread_id: str
+    target_cell_id: str
     relation: str
     weight: float = 0.0
     anchors: List[str] = Field(default_factory=list)
 
 
-class InteractionThread(BaseModel):
+class MemoryCell(BaseModel):
     """Compatibility cell addressed by its routing synopsis."""
 
-    thread_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    cell_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     head: str
     session_id: Optional[str] = None
     ordinal: int = 0
     start_timestamp: Optional[str] = None
     end_timestamp: Optional[str] = None
-    nodes: List[ThreadNode] = Field(default_factory=list)
-    links: List[ThreadLink] = Field(default_factory=list)
+    nodes: List[SourceTurn] = Field(default_factory=list)
+    links: List[CellLink] = Field(default_factory=list)
     embedding: List[float] = Field(default_factory=list)
 
     @property
@@ -82,7 +82,7 @@ class Dialogue(BaseModel):
 class MemoryEntry(BaseModel):
     """Compatibility view for answer/evaluator integrations.
 
-    The thread path does not use this flat object as a persistent index; it is
+    The cell path does not use this flat object as a persistent index; it is
     created only when a caller requests a flat compatibility result.
     """
 
@@ -90,4 +90,4 @@ class MemoryEntry(BaseModel):
     lossless_restatement: str
     timestamp: Optional[str] = None
     source_turn_ids: List[str] = Field(default_factory=list)
-    thread_id: Optional[str] = None
+    cell_id: Optional[str] = None

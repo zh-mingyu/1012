@@ -7,11 +7,11 @@ budget or introducing query-time state into the persistent graph.
 
 import inspect
 
-from memrewire.core.models.memory_entry import InteractionThread, ThreadNode
-from memrewire.core.thread_store import ThreadStore
+from memrewire.core.models.memory_entry import MemoryCell, SourceTurn
+from memrewire.core.cell_graph_store import CellGraphStore
 
 
-def _threads():
+def _cells():
     vectors = [
         [1.00, 0.00, 0.10, 0.00],
         [0.92, 0.18, 0.10, 0.00],
@@ -21,64 +21,64 @@ def _threads():
         [0.32, 0.80, 0.10, 0.00],
     ]
     return [
-        InteractionThread(
-            thread_id=f"t{index}",
+        MemoryCell(
+            cell_id=f"t{index}",
             head=f"topic {index}",
             session_id="s0" if index < 3 else "s1",
             ordinal=index,
-            nodes=[ThreadNode(node_id=f"t{index}:n0", text=f"turn {index}")],
+            nodes=[SourceTurn(node_id=f"t{index}:n0", text=f"turn {index}")],
             embedding=vector,
         )
         for index, vector in enumerate(vectors)
     ]
 
 
-def _pairs(threads):
+def _pairs(cells):
     pairs = set()
-    for thread in threads:
-        for link in thread.links:
-            left, right = thread.thread_id, link.target_thread_id
+    for cell in cells:
+        for link in cell.links:
+            left, right = cell.cell_id, link.target_cell_id
             pairs.add(tuple(sorted((left, right))))
     return pairs
 
 
-def _chronology(threads):
-    ordered = sorted(threads, key=lambda item: (item.ordinal, item.thread_id))
+def _chronology(cells):
+    ordered = sorted(cells, key=lambda item: (item.ordinal, item.cell_id))
     pairs = set()
     for left, right in zip(ordered, ordered[1:]):
-        pairs.add(tuple(sorted((left.thread_id, right.thread_id))))
+        pairs.add(tuple(sorted((left.cell_id, right.cell_id))))
     return pairs
 
 
-def _optional_degrees(threads):
-    chronology = _chronology(threads)
-    degrees = {thread.thread_id: 0 for thread in threads}
-    for left, right in _pairs(threads) - chronology:
+def _optional_degrees(cells):
+    chronology = _chronology(cells)
+    degrees = {cell.cell_id: 0 for cell in cells}
+    for left, right in _pairs(cells) - chronology:
         degrees[left] += 1
         degrees[right] += 1
     return degrees
 
 
-def _link_signature(threads):
+def _link_signature(cells):
     return sorted(
-        (thread.thread_id, link.target_thread_id, link.relation, round(link.weight, 12))
-        for thread in threads
-        for link in thread.links
+        (cell.cell_id, link.target_cell_id, link.relation, round(link.weight, 12))
+        for cell in cells
+        for link in cell.links
     )
 
 
-def _clone_threads():
+def _clone_cells():
     return [
-        thread.model_copy(deep=True)
-        if hasattr(thread, "model_copy")
-        else thread.copy(deep=True)
-        for thread in _threads()
+        cell.model_copy(deep=True)
+        if hasattr(cell, "model_copy")
+        else cell.copy(deep=True)
+        for cell in _cells()
     ]
 
 
-def _compile(threads):
-    return ThreadStore._compile_operator_links(
-        threads,
+def _compile(cells):
+    return CellGraphStore._compile_operator_links(
+        cells,
         max_neighbors=2,
         min_similarity=0.0,
         candidate_multiplier=3,
@@ -89,8 +89,8 @@ def _compile(threads):
 
 
 def test_operator_compiler_preserves_legacy_edge_budget_and_optional_degrees():
-    legacy = _clone_threads()
-    ThreadStore._build_thread_links(
+    legacy = _clone_cells()
+    CellGraphStore._build_cell_links(
         legacy,
         max_neighbors=2,
         min_similarity=0.0,
@@ -98,7 +98,7 @@ def test_operator_compiler_preserves_legacy_edge_budget_and_optional_degrees():
     baseline_pairs = _pairs(legacy)
     baseline_degrees = _optional_degrees(legacy)
 
-    compiled = _clone_threads()
+    compiled = _clone_cells()
     diagnostics = _compile(compiled)
 
     assert len(_pairs(compiled)) == len(baseline_pairs)
@@ -109,8 +109,8 @@ def test_operator_compiler_preserves_legacy_edge_budget_and_optional_degrees():
 
 
 def test_operator_compiler_is_deterministic_for_identical_input():
-    first = _clone_threads()
-    second = _clone_threads()
+    first = _clone_cells()
+    second = _clone_cells()
 
     first_diagnostics = _compile(first)
     second_diagnostics = _compile(second)
@@ -120,10 +120,10 @@ def test_operator_compiler_is_deterministic_for_identical_input():
 
 
 def test_operator_compiler_has_no_query_or_answer_inputs():
-    parameters = set(inspect.signature(ThreadStore._compile_operator_links).parameters)
+    parameters = set(inspect.signature(CellGraphStore._compile_operator_links).parameters)
     assert parameters.isdisjoint({"query", "question", "answer", "evidence"})
     assert parameters == {
-        "threads",
+        "cells",
         "max_neighbors",
         "min_similarity",
         "candidate_multiplier",
@@ -145,24 +145,24 @@ def test_random_rewiring_preserves_edge_budget_chronology_and_degrees():
         [0.0, 0.0, 1.0, 0.0],
         [0.0, 0.0, 0.0, 1.0],
     ]
-    threads = [
-        InteractionThread(
-            thread_id=f"r{index}",
+    cells = [
+        MemoryCell(
+            cell_id=f"r{index}",
             head=f"topic {index}",
             session_id="s0",
             ordinal=index,
-            nodes=[ThreadNode(node_id=f"r{index}:n0", text=f"turn {index}")],
+            nodes=[SourceTurn(node_id=f"r{index}:n0", text=f"turn {index}")],
             embedding=vector,
         )
         for index, vector in enumerate(vectors)
     ]
     legacy = [
-        thread.model_copy(deep=True)
-        if hasattr(thread, "model_copy")
-        else thread.copy(deep=True)
-        for thread in threads
+        cell.model_copy(deep=True)
+        if hasattr(cell, "model_copy")
+        else cell.copy(deep=True)
+        for cell in cells
     ]
-    ThreadStore._build_thread_links(
+    CellGraphStore._build_cell_links(
         legacy,
         max_neighbors=1,
         min_similarity=0.99,
@@ -170,8 +170,8 @@ def test_random_rewiring_preserves_edge_budget_chronology_and_degrees():
     baseline_degrees = _optional_degrees(legacy)
     baseline_edge_count = len(_pairs(legacy))
 
-    diagnostics = ThreadStore._random_rewire_links(
-        threads,
+    diagnostics = CellGraphStore._random_rewire_links(
+        cells,
         max_neighbors=1,
         min_similarity=0.99,
         seed=17,
@@ -181,8 +181,8 @@ def test_random_rewiring_preserves_edge_budget_chronology_and_degrees():
     assert diagnostics["accepted_swaps"] > 0
     assert diagnostics["degree_sequence_preserved"]
     assert diagnostics["selected_edges"] == baseline_edge_count
-    assert len(_pairs(threads)) == baseline_edge_count
-    assert _optional_degrees(threads) == baseline_degrees
+    assert len(_pairs(cells)) == baseline_edge_count
+    assert _optional_degrees(cells) == baseline_degrees
 
 
 def test_random_rewiring_is_reproducible_for_a_fixed_seed():
@@ -198,20 +198,20 @@ def test_random_rewiring_is_reproducible_for_a_fixed_seed():
             [0.0, 0.0, 0.0, 1.0],
         ]
         return [
-            InteractionThread(
-                thread_id=f"r{index}",
+            MemoryCell(
+                cell_id=f"r{index}",
                 head=f"topic {index}",
-                nodes=[ThreadNode(node_id=f"r{index}:n0", text=f"turn {index}")],
+                nodes=[SourceTurn(node_id=f"r{index}:n0", text=f"turn {index}")],
                 embedding=vector,
             )
             for index, vector in enumerate(vectors)
         ]
 
     first, second = build(), build()
-    first_diagnostics = ThreadStore._random_rewire_links(
+    first_diagnostics = CellGraphStore._random_rewire_links(
         first, max_neighbors=1, min_similarity=0.99, seed=23, swaps_per_edge=2
     )
-    second_diagnostics = ThreadStore._random_rewire_links(
+    second_diagnostics = CellGraphStore._random_rewire_links(
         second, max_neighbors=1, min_similarity=0.99, seed=23, swaps_per_edge=2
     )
 
